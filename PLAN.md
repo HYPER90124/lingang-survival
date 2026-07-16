@@ -33,7 +33,7 @@
 | M10 | 战斗体验重做（选项成功率/后果显示、遇敌数量文本、主角强化） | opus | ✅ 完成 |
 | M11 | 地图地理重排 + 江水/雨水/煮水系统 | sonnet | ✅ 完成 |
 | M12 | 全库文本逻辑自查（首次/重复口径等） | fable | ✅ 完成 |
-| M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ⬜ 待开工 |
+| M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ✅ 完成 |
 | M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ⬜ 已拍板，待开工 |
 | M15 | 入冬季节压力（温度/寒冷值/水源联动） | opus | ⬜ 已拍板，待开工 |
 | M16 | QoL 杂项（收音机/图鉴统计/多存档槽/清洁度） | opus | ⬜ 已拍板，待开工 |
@@ -51,6 +51,23 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M13（2026-07-17, fable）
+DoL 模式增强 A/B/C/D 四项全部实装。改动：`js/data/story/dol.js`（**新文件**，37 段落 + 23 事件）、`combat.js`（战败分流）、`state.js`（fx.roll 扩展）、`locations.js`/`worldevents.js`（5 处人类遇敌加脱身选项）、`index.html` + **`tools/build.js`**（新文件引入）、`docs/Schema.md`（fx.roll 登记）、`docs/NPC设定.md`（M13 通用互动登记节）。`dist/game.html` 重打（531.7KB，22 个脚本）。存档结构未动（新增 flag 全走既有 player.flags/storyFlags/world.flags）。
+
+**引擎扩展（均纯新增，已登记 Schema）**：
+- `fx.roll:{chance, win:{...fx}, lose:{...fx}}`（state.js applyFx）——掷骰递归执行分支，分支导航优先于外层同名导航。C 项的成功率判定靠它，M18/M19 的战术选项可复用。
+- combat.js `endCombat('lose')` 分流：**纯人类编组 + 无 onLose/returnPassage** → `humanDefeat()`（子弹减半、每叠非武器/非 key 物资没收 floor(count/2)、hp 立 15、理智-10、昏迷 `advance(180,{sleeping})`、原地醒来开 `dol_defeat_p1`）；损失清单存易失 `s._defeatLoss` 供文本。**剧情人类战斗（带 returnPassage）维持战败=死亡**——goto 续接段写有推进 flag，跳过会永久卡线（qin_s3_1 等），这是有意取舍不是漏做；丧尸/混编亦维持死亡。战败计数 `world.thugDefeats`（首败/复败文案分支用，M19 可读）。醒来段缺失时自动回退死亡（引擎不依赖数据文件存在）。
+
+**A 事件/段落**：`dol_defeat_p1/p2`（首败/复败双口径、有无武器双分支、损失清单动态拼接）。已知边角：昏迷 3 小时的整点 tick 会照常结算事件/约定（可能烧掉 once 事件或错过约会），判定为合理代价未修。
+
+**B 打工（scheduled 每日至多一询，priority 3，进场/整点触发）**：`dol_job_su`（bar 18–21 点，su 好感≥20：180 分钟 → 3 子弹+好感1+口渴+8，精力-12；周六收工偶发酒客闹事 +1 子弹+好感2）；`dol_job_lin`（hospital 8–14 点，lin≥40：240 分钟 → 4 子弹+绷带1+好感1，精力-15；周三偶发伤员，普通处置好感2/理智-2，**bandage 技能**另出高收益选项 好感3+理智2+绷带1）；`dol_job_cai`（dock 8–15 点，met cai 即可无好感门槛：240 分钟 → 5 子弹+好感1，精力-28 饥饿-6 重体力；周四走私箱/周日浮尸见闻纯氛围）。首次/重复口径用 `jobs.suDone/linDone/caiDone` flag 分支。**平衡自测**（Node 蒙特卡洛 2 万次，道具按 price×0.5 折子弹）：打工时薪 0.017–0.025 子弹/分钟，市场类搜刮 fresh 0.086–0.117、搜空挂底 floor 0.042–0.059——**打工不到挂底搜刮的一半，红线未破**，定位=零风险兜底收入（无遇敌、无负重、免跑商）。
+
+**C 非战斗脱身**（5 处人类遇敌 passage 各加 3 选项，成功率明示在文案，失败落战斗）：色诱（理智≥40，55%）/ 贿赂（子弹≥8，80%，**失败子弹照扣**）/ 虚张声势（灰猫好感≥40 解锁黑话，65%）。共享结局段 7 个：`dol_charm_ok_p`（性别双分支）/`dol_bribe_ok_p`/`dol_bluff_ok_p` + 失败段按编组 `dol_talk_fail_patrol/squad_p`、`dol_bribe_fail_patrol/squad_p`（失败段唯一选项=迎战开打）。入口：locations.js `enc_police_1_p`（patrol）/`enc_checkpoint_1_p`（squad）、worldevents.js `enc_gas_2_p`（patrol）/`enc_mall_2_p`（squad）/`butcher_world_1_p`（patrol）。剧情线人类战斗（qin/mao/zhao）**未加**脱身选项（剧情节拍不该绕）。注：M3 的原「撤退」选项本就免费，脱身三选项是风格向侧路不是强度提升，黑话成功还+2 理智是唯一小甜头。
+
+**D NPC 邀约**（好感≥60，随机 chance .15 / cd 4320 / priority 2）：十人全做。`dol_invite_{id}` 按各自作息地点+时段触发（mao 在 sewer 需信任在场），接受 → `npc.{id}.datePending`=true + 日历 appointment（**次日定点**，eventId 强制触发 `dol_date_{id}`，全部约在午夜前避免「明晚」口径错位）；到点**在场=赴约**（好感+4 + 理智4~8 + 各自风味收益，时长 60–90 分）、**不在场=爽约**（好感-3），两条出口都清 datePending，拒绝邀约不扣好感。**主线八人（qin/lin/mao/su/dou/zhou/zhao/fang）另需 stage≥2**——好感可以裸堆到 60 而不升阶，信任门保证约会文本引用的都是已知信息；chen/cai 无阶段线不设门。约会地点/时刻：qin 酒吧20:00、lin 医院天台21:00、mao 码头22:00、su 酒吧21:00、dou 加油站棚顶21:00、zhou 广播站16:00、zhao 超市后屋19:00、chen 教堂20:00、cai 码头19:00、fang 检查站21:00。「不在某地」用其余 14 地点 anyOf 表达（cond DSL 无否定）。已知边角：同日可与多人订约，后到期者自动按爽约结算（玩家自选的排期代价）；约定到点若在赶路途中的整点 tick 结算则按当时所在地判定。
+
+**测试（scratchpad 未入库：m13_test.js 413 项全绿 / m13_integrity.js / m13_balance.js）**：全库 454 passage 双性别 text 0 抛错、230 事件 0 断链（含 fx.roll 递归扫描）；A 四分流（人类散遇→洗劫醒来含物品清点/剧情道具豁免/装备保留/时间+180，丧尸→死、带 returnPassage→死、混编→死）；C 条件门+成败全链路到开打；B 三工触发门/工钱/去重/周六周三周四周日分支/包扎术选项；D 触发门/日历登记/赴约收益/爽约扣好感/datePending 防重/阶段门/十人逐一冒烟；新 flag 存读档往返。**坑一则：`tools/build.js` 的 SCRIPTS 是硬编码清单，不读 index.html**（M9 备注说「顺序照 index.html」是指人工对齐）——新增数据文件必须两处都加，本次 dol.js 第一次打包就漏了，靠字面量 grep dist 才发现。
 
 ### M12（2026-07-17, fable）
 全库文本逻辑自查完成。只改文案与 cond/分支（含 2 处静态 passage 改 text 函数分支、1 处事件加 met cond、1 处文本函数门槛由 stage 改 flag），零数值/事件结构/flag 命名改动，存档兼容。`dist/game.html` 已重打（500.0KB）。**新验证网**：首访机器人（scratchpad `m12_firstvisit_bot.js`，未入库）——新档 dump 开场 5 段 + 15 地点昼/夜描述 + 10 NPC 初遇全段落 + 全部修改点渲染回归，**0 报错**，文本人工通读一遍。

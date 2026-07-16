@@ -285,6 +285,43 @@
     });
   }
 
+  // ---- M13：对人类敌人的战败非死亡（defeat 机制） ---------------------------
+  // 仅对「纯人类敌人编组 + 无 onLose/returnPassage 的散遇」生效：
+  //   剧情战斗的 goto 续接段落里写有推进 flag，跳过会永久卡线，维持原「战败=死亡」；
+  //   丧尸战败仍死亡（被吃了没得商量）。醒来文本由数据层注册（dol.js），缺失时回退死亡。
+  function canHumanDefeat(combat) {
+    if (combat.onLose || combat.returnPassage) return false;
+    if (!combat.enemies.length) return false;
+    if (!combat.enemies.every(function (e) { return e.human; })) return false;
+    return !!(G.data.story && G.data.story.get && G.data.story.get('dol_defeat_p1'));
+  }
+
+  function humanDefeat() {
+    var s = S(), p = s.player;
+    // 被洗劫：子弹减半 + 每叠可堆叠物资没收一半（武器留在你手边，剧情道具他们看不上）
+    var lostBullets = Math.floor(p.bullets / 2);
+    p.bullets -= lostBullets;
+    var lostItems = [];
+    p.inventory.slice().forEach(function (entry) {
+      var def = G.engine.itemDef(entry.id);
+      if (def && (def.type === 'key' || def.type === 'weapon')) return;
+      var take = Math.floor(entry.count / 2);
+      if (take > 0) {
+        G.engine.removeItem(entry.id, take);
+        lostItems.push({ name: (def && def.name) || entry.id, count: take });
+      }
+    });
+    s._defeatLoss = { bullets: lostBullets, items: lostItems };   // 易失，仅供醒来文本
+    s.world.flags.thugDefeats = (s.world.flags.thugDefeats || 0) + 1;
+    // 重伤昏迷：先把 hp 立回 15 再挨过昏迷时间（3 小时的饥渴消耗压不死 15 点血）
+    G.engine.statSet('hp', 15);
+    G.engine.statAdd('sanity', -10);
+    s.combat = null;
+    G.engine.advance(180, { sleeping: true });
+    if (s._dead) return;                       // 保险：昏迷结算若致死交给 onDeath
+    G.engine.openPassage('dol_defeat_p1');
+  }
+
   function endCombat(result) {
     var combat = S().combat;
     combat.over = true;
@@ -294,6 +331,7 @@
     // 续接路由（回调优先，其次 returnPassage，最后回地点）
     if (result === 'lose') {
       if (combat.onLose) combat.onLose();
+      else if (canHumanDefeat(combat)) humanDefeat();
       else if (G.engine.onDeath) G.engine.onDeath('combat');
       return;
     }

@@ -78,7 +78,9 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
   time:30,                                   // 消耗分钟
   appointment:{ inDays:2, minute:1200, label:"和老秦巡逻", eventId:"qin_patrol_1" },
   milestone:"初遇灰猫",
-  goto:"qin_s1_2a", combat:"zombie_pair", shop:"zhao_main" }
+  goto:"qin_s1_2a", combat:"zombie_pair", shop:"zhao_main",
+  roll:{ chance:0.55, win:{...fx}, lose:{...fx} } }   // M13 扩展：概率分支，掷骰后递归执行
+                                                      // 对应分支，分支里的导航指令优先于外层
 ```
 
 ## 剧情段落（passage）

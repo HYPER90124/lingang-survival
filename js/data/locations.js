@@ -551,6 +551,13 @@
 
   passage('enc_police_1_p', '拐角处两个屠夫帮的人正在分赃，看见你立刻抄起家伙。', [
     { label: '先发制人', fx: { combat: 'thug_patrol' } },
+    // M13：人类遇敌的非战斗解法（成功率明示，失败落战斗；结局段共享注册在 dol.js）
+    { label: '凑上去以色相许，换一条路（55%）', cond: { stat: { sanity: { gte: 40 } } },
+      fx: { roll: { chance: 0.55, win: { goto: 'dol_charm_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
+    { label: '数出8发子弹买路（80%）', cond: { has: { bullets: 8 } },
+      fx: { bullets: -8, roll: { chance: 0.8, win: { goto: 'dol_bribe_ok_p' }, lose: { goto: 'dol_bribe_fail_patrol_p' } } } },
+    { label: '用灰猫的黑话报个门路（65%）', cond: { aff: { mao: { gte: 40 } } },
+      fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
     { label: '退回楼梯间', fx: { stat: { energy: -5 } } }
   ]);
   event('enc_police_1', 'police', { cond: { chance: 0.2 }, cooldown: 360 }, 'enc_police_1_p');
@@ -677,6 +684,13 @@
 
   passage('enc_checkpoint_1_p', '掩体后两名屠夫帮的人正在清点抢来的军用物资。', [
     { label: '抢先动手', fx: { combat: 'thug_squad' } },
+    // M13：非战斗解法（同 enc_police_1_p，失败段对应 squad 编组）
+    { label: '凑上去以色相许，换一条路（55%）', cond: { stat: { sanity: { gte: 40 } } },
+      fx: { roll: { chance: 0.55, win: { goto: 'dol_charm_ok_p' }, lose: { goto: 'dol_talk_fail_squad_p' } } } },
+    { label: '数出8发子弹买路（80%）', cond: { has: { bullets: 8 } },
+      fx: { bullets: -8, roll: { chance: 0.8, win: { goto: 'dol_bribe_ok_p' }, lose: { goto: 'dol_bribe_fail_squad_p' } } } },
+    { label: '用灰猫的黑话报个门路（65%）', cond: { aff: { mao: { gte: 40 } } },
+      fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_squad_p' } } } },
     { label: '退到路障后', fx: { stat: { energy: -6 } } }
   ]);
   event('enc_checkpoint_1', 'checkpoint', { cond: { chance: 0.2 }, cooldown: 360 }, 'enc_checkpoint_1_p');

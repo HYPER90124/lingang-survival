@@ -202,6 +202,13 @@
 
   P('enc_gas_2_p', '两条人影正撬着储油罐的阀门往桶里放油，看见你，为首的把撬棍一横：“走你的路。”袖口露出半截暗红布条。', [
     { label: '“这站里的油，轮不到你们放。”', fx: { combat: 'thug_patrol' } },
+    // M13：非战斗解法（成功率明示，失败落战斗；结局段共享注册在 dol.js）
+    { label: '凑上去以色相许，换一条路（55%）', cond: { stat: { sanity: { gte: 40 } } },
+      fx: { roll: { chance: 0.55, win: { goto: 'dol_charm_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
+    { label: '数出8发子弹买路（80%）', cond: { has: { bullets: 8 } },
+      fx: { bullets: -8, roll: { chance: 0.8, win: { goto: 'dol_bribe_ok_p' }, lose: { goto: 'dol_bribe_fail_patrol_p' } } } },
+    { label: '用灰猫的黑话报个门路（65%）', cond: { aff: { mao: { gte: 40 } } },
+      fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
     { label: '绕开这摊事', fx: { stat: { sanity: -2 } } }
   ]);
   ev('enc_gas_2', { loc: 'gas', chance: 0.12 }, 600, 'enc_gas_2_p');
@@ -219,6 +226,13 @@
 
   P('enc_mall_2_p', '楼上传来齐整的脚步声——两个缠红布条的人一前一后压过来，手电光柱来回扫：“搜仔细点，孟爷说了，踩点的就在这几天来过。”', [
     { label: '趁他们没合围先动手', fx: { combat: 'thug_squad' } },
+    // M13：非战斗解法（失败段对应 squad 编组）
+    { label: '凑上去以色相许，换一条路（55%）', cond: { stat: { sanity: { gte: 40 } } },
+      fx: { roll: { chance: 0.55, win: { goto: 'dol_charm_ok_p' }, lose: { goto: 'dol_talk_fail_squad_p' } } } },
+    { label: '数出8发子弹买路（80%）', cond: { has: { bullets: 8 } },
+      fx: { bullets: -8, roll: { chance: 0.8, win: { goto: 'dol_bribe_ok_p' }, lose: { goto: 'dol_bribe_fail_squad_p' } } } },
+    { label: '用灰猫的黑话报个门路（65%）', cond: { aff: { mao: { gte: 40 } } },
+      fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_squad_p' } } } },
     { label: '从消防通道脱身', fx: { stat: { energy: -8 }, time: 15 } }
   ]);
   ev('enc_mall_2', { loc: 'mall', chance: 0.15 }, 480, 'enc_mall_2_p');
@@ -545,6 +559,13 @@
     },
     [
       { label: '教他们做人', fx: { combat: 'thug_patrol' } },
+      // M13：非战斗解法（收账队为 patrol 编组）
+      { label: '凑上去以色相许，换一条路（55%）', cond: { stat: { sanity: { gte: 40 } } },
+        fx: { roll: { chance: 0.55, win: { goto: 'dol_charm_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
+      { label: '数出8发子弹买路（80%）', cond: { has: { bullets: 8 } },
+        fx: { bullets: -8, roll: { chance: 0.8, win: { goto: 'dol_bribe_ok_p' }, lose: { goto: 'dol_bribe_fail_patrol_p' } } } },
+      { label: '用灰猫的黑话报个门路（65%）', cond: { aff: { mao: { gte: 40 } } },
+        fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
       { label: '压低帽檐绕开', fx: { stat: { sanity: -2 } } }
     ]);
   ev('butcher_world_1', { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12 }, 1440, 'butcher_world_1_p', 1);

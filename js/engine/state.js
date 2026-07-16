@@ -324,9 +324,20 @@
     // 时间推进最后于副作用之后进行（可能触发跨整点/阈值事件）
     if (fx.time) G.engine.advance(fx.time);
 
-    if (fx.goto)   nav.goto = fx.goto;
-    if (fx.combat) nav.combat = fx.combat;
-    if (fx.shop)   nav.shop = fx.shop;
+    // M13 扩展：概率分支 roll:{chance, win:{...fx}, lose:{...fx}}
+    // 掷骰后递归执行对应分支，分支里的导航指令向外传递（覆盖外层同名导航）。
+    // 供「非战斗脱身」类选项使用：成功率写死在 chance、标注在选项文案里。
+    if (fx.roll) {
+      var branch = Math.random() < (fx.roll.chance || 0) ? fx.roll.win : fx.roll.lose;
+      var sub = applyFx(branch);
+      if (sub.goto)   nav.goto = sub.goto;
+      if (sub.combat) nav.combat = sub.combat;
+      if (sub.shop)   nav.shop = sub.shop;
+    }
+
+    if (fx.goto && !nav.goto)     nav.goto = fx.goto;
+    if (fx.combat && !nav.combat) nav.combat = fx.combat;
+    if (fx.shop && !nav.shop)     nav.shop = fx.shop;
     return nav;
   }
   G.engine.applyFx = applyFx;
