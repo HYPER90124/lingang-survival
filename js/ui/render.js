@@ -107,6 +107,7 @@
   var NAV_ITEMS = [
     { name: 'map', icon: '🗺️', label: '地图' },
     { name: 'inventory', icon: '🎒', label: '背包' },
+    { name: 'npc', icon: '👥', label: '关系' },   // M4：好感面板（G.ui.panels.open('npc')）
     { name: 'body', icon: '❤', label: '身体' },
     { name: 'calendar', icon: '📅', label: '日历' },
     { name: 'system', icon: '⚙', label: '系统' }

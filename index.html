@@ -25,25 +25,32 @@
   <script src="js/engine/combat.js"></script>
   <script src="js/engine/save.js"></script>
 
-  <!-- UI 层（M2 补齐后取消注释） -->
-  <!--
+  <!-- UI 层（M2） -->
   <script src="js/ui/render.js"></script>
   <script src="js/ui/panels.js"></script>
   <script src="js/ui/tags.js"></script>
-  -->
 
-  <!-- 数据层（M3+ 补齐后取消注释；纯数据注册，可安全并行） -->
-  <!--
+  <!-- 数据层：M3 已交付 items/enemies/locations/trade，取消注释引入 -->
   <script src="js/data/items.js"></script>
+  <script src="js/data/enemies.js"></script>
   <script src="js/data/locations.js"></script>
-  <script src="js/data/npcs.js"></script>
   <script src="js/data/trade.js"></script>
+  <!-- NPC 框架与好感度系统（M4） -->
+  <script src="js/data/npcs.js"></script>
+  <!-- 以下为 M5+ 剧情补齐后取消注释 -->
+  <!--
   <script src="js/data/story/qin.js"></script>
   <script src="js/data/story/lin.js"></script>
   <script src="js/data/story/mao.js"></script>
   <script src="js/data/story/secondary.js"></script>
   <script src="js/data/story/minor.js"></script>
   <script src="js/data/story/worldevents.js"></script>
+  -->
+
+  <!--
+    js/ui/_demo.js（M2 界面验收假数据：NPC 占位 + 标签演示 passage）：M4 已交付
+    真实 js/data/npcs.js，按 M2 交接约定移除本文件的 <script> 引入（文件本身保留，
+    供以后回归自测时临时手动加回）。
   -->
 
   <!-- 启动（必须最后） -->
