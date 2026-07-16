@@ -314,3 +314,263 @@
     ]);
 
 })();
+
+/* =============================================================================
+ * lin.js·后半（M6：亲密→羁绊）
+ * -----------------------------------------------------------------------------
+ * 节拍一览（衔接 M5：stage 2 + npc.lin.s2_3:true 起步）：
+ *   亲密（stage 3）
+ *     lin_s3_1  委托：大学实验楼取病毒资料（talk；拒绝可改日再谈，接受写 labquest）
+ *     lin_s3_2  大型事件：生化实验楼探索（enter/action @campus；败分支=只拿半份
+ *               partialDocs，不掉线；碰暗线只给碎片）
+ *     lin_s3_3  交付资料 + 关系转折 + 升阶→亲密（talk，需好感≥60）
+ *     lin_s3_4  首次成人事件（talk @hospital 夜，性别分支；可拒绝，冷却后再谈）
+ *   羁绊（stage 4）
+ *     lin_s4_1  升阶→羁绊：医院钥匙 + 义诊日约定（talk，需好感≥80；首次登记
+ *               周日义诊日历，见 bookWeekly）
+ *     lin_clinic_1  周期事件：每周日上午义诊日（scheduled，weekday 6）
+ *     lin_cure_1  感染救治专属剧情（感染≥60 @hospital，可重复，冷却一天，priority 9）
+ *     lin_s4_2  羁绊成人变体（talk @hospital 夜，可重复，冷却 2 天，priority 2）
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  var story = G.data.story, events = G.data.events;
+
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+  var LIN_NIGHT = [1200, 120];   // 值班室夜谈时段 20:00–次日02:00
+
+  function bookWeekly(guardFlag, targetWd, minute, label) {
+    if (G.engine.getFlag(guardFlag)) return;
+    G.engine.setFlag(guardFlag, true);
+    var p = G.state.player;
+    var diff = (targetWd - (p.day % 7) + 7) % 7;
+    if (!diff) diff = 7;
+    G.state.calendar.appointments.push({ day: p.day + diff, minute: minute, label: label, eventId: null, done: false });
+  }
+
+  // ==========================================================================
+  // 亲密（stage 3）
+  // ==========================================================================
+
+  // ---- lin_s3_1 委托：实验楼病毒资料 ----------------------------------------
+  events.register({
+    id: 'lin_s3_1', type: 'story', npc: 'lin', when: ['talk'], once: false, cooldown: 1440, priority: 5,
+    cond: { loc: 'hospital', stage: { lin: 2 }, flag: { 'npc.lin.s2_3': true, 'npc.lin.s3_1': false } },
+    passage: 'lin_s3_1_p1'
+  });
+
+  P('lin_s3_1_p1',
+    '诊台上摊着几页写满字的纸，[npc:lin]林晚[/npc]的字迹罕见地乱。“你看这个——”她把两张检验单并排推过来，“感染者的血象，和任何一本教科书都对不上。我治不了这个病，可我连它是什么都不知道，这更糟。”她抬起头，眼睛里烧着一点你没见过的东西，“[place]临港大学[/place]的生化实验楼，三楼是档案区。论文、检测台账、审批单，能拿多少拿多少。”',
+    [
+      { label: '接下委托', fx: { flag: { 'npc.lin.s3_1': true, 'npc.lin.labquest': true }, aff: { lin: 2 }, appointment: { inDays: 3, minute: 1020, label: '替林晚去实验楼找资料' }, goto: 'lin_s3_1_p2' } },
+      { label: '“你要这些做什么？”', fx: { goto: 'lin_s3_1_p1q' } },
+      { label: '那栋楼太邪，先不接', fx: {} }
+    ]);
+
+  P('lin_s3_1_p1q',
+    '“弄懂它。”她的指尖点着检验单上一处发疯似的数值，“弄懂了，哪怕治不好，我也知道病人还剩多少时间、哪种死法可以绕开。医生输给病不丢人，输给无知丢人。”她看着你，“那栋楼不干净，我知道。你不去，我不怪你——你去，就给我活着回来。”',
+    [
+      { label: '接下委托', fx: { flag: { 'npc.lin.s3_1': true, 'npc.lin.labquest': true }, aff: { lin: 2 }, appointment: { inDays: 3, minute: 1020, label: '替林晚去实验楼找资料' }, goto: 'lin_s3_1_p2' } },
+      { label: '还是太险了', fx: {} }
+    ]);
+
+  P('lin_s3_1_p2',
+    '“实验楼从爆发起就贴着军用封条，正门走不通，找侧面的消防门。”她往你包里塞了两卷绷带和一小瓶[med]消毒水[/med]，动作快得不容拒绝，“白天去，带手电。记住——纸没了可以再想办法，人没了不行。”',
+    [{ label: '收拾动身', fx: { item: { bandage: 2, disinfectant: 1 } } }]);
+
+  // ---- lin_s3_2 大型事件：生化实验楼 ----------------------------------------
+  events.register({
+    id: 'lin_s3_2', type: 'story', npc: 'lin', when: ['enter', 'action'], once: true, priority: 7,
+    cond: { loc: 'campus', flag: { 'npc.lin.labquest': true, 'npc.lin.s3_2': false } },
+    passage: 'lin_s3_2_p1'
+  });
+
+  P('lin_s3_2_p1',
+    '生化实验楼蹲在校区最深处，爬山虎吃掉了半面墙。正门交叉贴着的军用封条褪成粉白，侧面的消防门却虚掩着——门框上的撬痕有新有旧，最新的一道，茬口还亮着。你不是第一个来的，也不是第二个。',
+    [{ label: '从消防门进去', fx: { time: 15, stat: { sanity: -3 }, goto: 'lin_s3_2_p2' } }]);
+
+  P('lin_s3_2_p2',
+    '手电的光柱里漂着灰。三楼档案区，一排文件柜大多敞着口，有的整层抽屉被人抱走，有的干脆烧过，墙角还留着烧剩的灰堆——来过的人不止一拨，拿走的东西各有偏好。你翻检剩下的：半本检测台账，编号开头是相同的两个字母；一叠盖着“未予备案”红章的申请复印件。走廊尽头还有一间负压实验室，军规的电子锁锁死了，门缝里渗出一股化学品的甜味，还有——很轻的，拖行声。',
+    [
+      { label: '就拿这些，见好就收', fx: { time: 30, flag: { 'npc.lin.s3_2': true, 'npc.lin.gotDocs': true, 'npc.lin.partialDocs': true }, goto: 'lin_s3_2_p4' } },
+      { label: '把塌了半边的检验室侧间也翻一遍', fx: { stat: { sanity: -3 }, combat: 'runner_pack', goto: 'lin_s3_2_p3' } }
+    ]);
+
+  P('lin_s3_2_p3',
+    '侧间重新安静下来。你把掀翻的柜子别开，底下压着一只没上锁的铁皮档案盒——成册的实验记录，纸页脆黄但完整。你抱着它退出实验楼，快步穿过长草的操场，直到日光落在纸页上，你才发现自己一直屏着呼吸。',
+    [{ label: '带着资料回医院', fx: { flag: { 'npc.lin.s3_2': true, 'npc.lin.gotDocs': true }, time: 20, goto: 'lin_s3_2_p4' } }]);
+
+  P('lin_s3_2_p4',
+    '走出校门，你回头看了一眼。爬山虎后面，三楼的窗黑洞洞的。那扇军规的门后面锁着的东西，和这半城的死人有没有关系，纸上没有答案——答案不在，线头在。',
+    [{ label: '（返回）', fx: {} }]);
+
+  // ---- lin_s3_3 交付 + 关系转折 + 升阶→亲密 ---------------------------------
+  events.register({
+    id: 'lin_s3_3', type: 'story', npc: 'lin', when: ['talk'], once: true, priority: 6,
+    cond: { loc: 'hospital', stage: { lin: 2 }, flag: { 'npc.lin.s3_2': true, 'npc.lin.s3_3': false }, aff: { lin: { gte: 60 } } },
+    passage: 'lin_s3_3_p1'
+  });
+
+  P('lin_s3_3_p1',
+    function () {
+      var head = '[npc:lin]林晚[/npc]把你带回的纸页在诊台上铺开，读得极快，笔尖在几行编号下面划线。';
+      head += G.engine.getFlag('npc.lin.partialDocs')
+        ? '“缺得厉害。”她说，却没有失望的意思，“够我啃一阵了。”'
+        : '“比我想的多。”她的声音有一点不易察觉的抖，“这些记录，够我啃半年。”';
+      return head + '翻到台账中段，她的笔尖突然停住——同一批编号，检测日期比封城早了半个月。她盯着那行字看了几秒，把整页翻过去扣在桌面上，像扣住什么烫手的东西。“这些，先放我这儿。”';
+    },
+    [
+      { label: '“日期不对，你看到了。”', fx: { goto: 'lin_s3_3_p1b' } },
+      { label: '不点破，等她开口', fx: { goto: 'lin_s3_3_p1b' } }
+    ]);
+
+  P('lin_s3_3_p1b',
+    '“我看到了。”她没有抬头，“看到不等于看懂，看懂了也未必敢信。这一页，等我把别的啃完再回头碰。”她把台账仔细收进上锁的抽屉——和那格[med]镇静剂[/med]放在一起。这个抽屉里锁着的，都是她暂时打不过的东西。',
+    [{ label: '（点头）', fx: { goto: 'lin_s3_3_p2' } }]);
+
+  P('lin_s3_3_p2',
+    '她给你倒水，手抖了一下，水在杯沿洒出来。“去之前我算过，这趟的风险值得。”她背对着你，声音很平，“资料到手，我该高兴。可你进门之前那十分钟，我满脑子只有一件事——你要是没回来，这点纸算什么。”她转过身，眼下的乌青比平时深，“我丈夫走后，我把自己焊死在这栋楼里，以为再没有什么能拆动我。你拆动了。”',
+    [
+      { label: '走过去抱住她', fx: { goto: 'lin_s3_3_p3' } },
+      { label: '“我回来了。这就是答案。”', fx: { goto: 'lin_s3_3_p3' } }
+    ]);
+
+  P('lin_s3_3_p3',
+    '她没有躲。过了几秒，她的手从白大褂口袋里抽出来，轻轻攥住你的衣角——像上次在诊室门口一样，只是这次她没有松开，也不打算松开了。“今晚我不值班。”她抬起头，努力用医嘱的语气说，“留下来，陪我吃顿饭。就从这样开始，可以吗？”',
+    [{ label: '“可以。”', fx: { stage: { lin: 3 }, flag: { 'npc.lin.s3_3': true }, aff: { lin: 6 }, time: 90, milestone: '林晚放你进了她的世界' } }]);
+
+  // ---- lin_s3_4 首次成人事件 ------------------------------------------------
+  events.register({
+    id: 'lin_s3_4', type: 'story', npc: 'lin', when: ['talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'hospital', timeRange: LIN_NIGHT, stage: { lin: { gte: 3 } }, flag: { 'npc.lin.s3_4': false } },
+    passage: 'lin_s3_4_p1'
+  });
+
+  P('lin_s3_4_p1',
+    function () {
+      var head = '值班室里只点着一盏台灯。[npc:lin]林晚[/npc]拆掉发绳，头发散下来，白大褂搭在椅背上，她整个人忽然只是一个疲惫的、好看的女人。';
+      if (G.engine.getFlag('npc.lin.gaveSedative')) {
+        head += '抽屉里的[med]镇静剂[/med]照旧锁着，钥匙在你身上——她已经很多天没找你要过了。';
+      } else if (G.engine.getFlag('npc.lin.coldTurkey')) {
+        head += '她的手很稳。那场硬扛过去的戒断，把她还给了她自己。';
+      }
+      return head + '“今晚别走。”她说得很轻，手指抓着你的袖口——和从前一样，只是这次，她没有要松手的意思。';
+    },
+    [
+      { label: '留下', fx: { goto: 'lin_s3_4_p2' } },
+      { label: '“今晚不行，明天来看你。”', fx: { goto: 'lin_s3_4_pout' } }
+    ]);
+
+  P('lin_s3_4_pout',
+    '她的手指立刻松开，收回口袋，语气如常：“嗯，路上小心。”只有转身时太快的那半步，泄露了一点别的。你走到走廊尽头回头看，值班室的灯还亮着，她的影子投在磨砂玻璃上，很久没有动。',
+    [{ label: '（离开）', fx: {} }]);
+
+  P('lin_s3_4_p2',
+    function (s) {
+      var head = '台灯拉到最低，值班室的行军床窄得只容两个人叠在一起。她吻你的方式带着一种孤注一掷的认真，手指埋进你的头发，扣着你的后脑不放，像怕你在一个吻的间隙里蒸发。';
+      if (s.player.gender === 'f') {
+        return head + '她的手顺着你的脊椎一节节按下去——是医生的手，准，稳，烫。可落到你身上时，那点专业的冷静烧得一干二净，她把脸埋在你颈窝，声音又低又哑：“说话，随便说什么，让我听见你。”她的指尖探进你身体的时候，你的喘息卡在喉咙里，她就吻你的喉咙，一遍一遍，把你拆开又拼拢，直到你在她掌心里发着抖到达。她抱着你不放，像抱一件失而复得的东西。';
+      }
+      return head + '她跨坐上来，台灯给她的轮廓描了一圈毛边。她握着你的手贴上她的心口——心跳快得吓人，和她脸上的镇静完全是两回事。她引着你进入她的时候，眉心蹙起又缓缓松开，俯身抵着你的额头，呼吸全乱了，还固执地睁着眼：“看着我。”她动得不快，却一下比一下沉，你扣住她的腰，她终于闭上眼，把一声破碎的喘息咬在你的肩膀上，身体一阵一阵地颤。';
+    },
+    [{ label: '搂紧她', fx: { goto: 'lin_s3_4_p3' } }]);
+
+  P('lin_s3_4_p3',
+    '事后她枕在你的心口，一根手指搭在你的颈动脉上——数你的脉搏，数着数着，呼吸终于匀了。后半夜你醒过一次，她在黑暗里睁着眼看你，被发现了也不躲：“继续睡。”她把毯子往你身上掖，“我就是确认一下，你在。”',
+    [{ label: '（把她搂进怀里睡去）', fx: { stat: { energy: -18, sanity: 5 }, time: 360, aff: { lin: 8 }, flag: { 'npc.lin.s3_4': true }, milestone: '与林晚的一夜' } }]);
+
+  // ==========================================================================
+  // 羁绊（stage 4）
+  // ==========================================================================
+
+  // ---- lin_s4_1 升阶→羁绊：钥匙与义诊约定 -----------------------------------
+  events.register({
+    id: 'lin_s4_1', type: 'story', npc: 'lin', when: ['talk'], once: true, priority: 6,
+    cond: { loc: 'hospital', stage: { lin: 3 }, flag: { 'npc.lin.s3_3': true, 'npc.lin.s4_1': false }, aff: { lin: { gte: 80 } } },
+    passage: 'lin_s4_1_p1'
+  });
+
+  P('lin_s4_1_p1',
+    '[npc:lin]林晚[/npc]把一小串钥匙放进你手心：诊室，后门，药房外间。“这栋楼的钥匙，一共只有两串。”另一串，她当着你的面从贴身口袋里取出来，和一枚男式的旧[item]戒指[/item]一起，放进抽屉最深处，落了锁。这一次，钥匙没有再拿出来。“人得往前活。”她说这话时看着你，不是看着抽屉。',
+    [{ label: '收好钥匙', fx: { goto: 'lin_s4_1_p2' } }]);
+
+  P('lin_s4_1_p2',
+    function () {
+      bookWeekly('npc.lin.clinicBooked', 6, 540, '医院义诊日');
+      return '“还有件事。”她翻开排班表——那上面其实只有她一个人的名字，“每周日上午，我想开义诊，附近的幸存者都能来，不收子弹。这场面我一个人撑不住。”她把笔递给你，指了指自己名字旁边的空栏，“你在，我心里稳。”';
+    },
+    [{ label: '写下自己的名字', fx: { stage: { lin: 4 }, flag: { 'npc.lin.s4_1': true }, aff: { lin: 5 }, milestone: '林晚把医院的钥匙给了你' } }]);
+
+  // ---- lin_clinic_1 周期事件：义诊日（每周日上午） ---------------------------
+  events.register({
+    id: 'lin_clinic_1', type: 'scheduled', npc: 'lin', priority: 4,
+    cond: { loc: 'hospital', weekday: 6, timeRange: [540, 1020], stage: { lin: { gte: 4 } } },
+    passage: 'lin_clinic_p1'
+  });
+
+  P('lin_clinic_p1',
+    function () {
+      var pool = [
+        '天没大亮，医院门口已经排起了队：抱孩子的女人，咳嗽的老头，一个用门板抬来的伤号。[npc:lin]林晚[/npc]立在门口分诊，语速快得像点名；你负责维持队形、递器械、按住不肯配合的伤口。',
+        '今天的义诊来了个熟面孔——上次那个腹部插钢筋的男人，拄着自制的拐，给[npc:lin]林晚[/npc]鞠了个躬，又给你鞠了一个。他身后跟着一家人，篮子里装着几个还热的红薯，说什么都要留下。',
+        '队伍里起了争执，两个汉子为插队吵得要动手。你还没走过去，[npc:lin]林晚[/npc]头也不抬地开口：“打架的出去，伤好了再打。我这儿缝一针收一发子弹——今天免费，明天恢复原价。”队伍哄笑，架吵不起来了。'
+      ];
+      return pool[Math.floor(Math.random() * pool.length)];
+    },
+    [{ label: '一直帮到收摊', fx: { time: 240, stat: { energy: -15, sanity: 5 }, aff: { lin: 3 }, appointment: { inDays: 7, minute: 540, label: '医院义诊日' }, goto: 'lin_clinic_p2' } }]);
+
+  P('lin_clinic_p2',
+    '最后一个病人走的时候，日头已经偏西。[npc:lin]林晚[/npc]靠在挂号台上揉手腕，白大褂前襟蹭着血点和碘伏渍，人却比平时任何时候都亮。“下周日，”她偏头看你，“还来？”',
+    [{ label: '“每周都来。”', fx: { aff: { lin: 1 } } }]);
+
+  // ---- lin_cure_1 感染救治专属剧情（可重复） --------------------------------
+  events.register({
+    id: 'lin_cure_1', type: 'story', npc: 'lin', when: ['enter', 'action', 'talk'], once: false, cooldown: 1440, priority: 9,
+    cond: { loc: 'hospital', stage: { lin: { gte: 4 } }, stat: { infection: { gte: 60 } } },
+    passage: 'lin_cure_p1'
+  });
+
+  P('lin_cure_p1',
+    '你人还没站稳，[npc:lin]林晚[/npc]的目光已经钉在你脖颈侧面——皮肤底下，暗色的纹路正顺着血管往上爬。她脸上的血色褪了个干净，下一秒，她已经拽着你往手术室走，力气大得不像她。“多久了？咬伤还是划伤？为什么现在才来！”三个问题，没有一个等你回答。',
+    [{ label: '任她摆布', fx: { goto: 'lin_cure_p2' } }]);
+
+  P('lin_cure_p2',
+    '军用抗病毒剂，冰盐水，她自己配的、气味刺鼻的洗剂——整套流程她做得又快又狠。输液针扎进去，烧灼感顺着血管一路爬，疼得你指节发白。“忍着。剂量是我照实验楼那半本台账重配的，比军标的狠，也比它有用。”不知过了多久，那种从骨缝里往外渗的热，终于退了。',
+    [
+      { label: '缓过气来', cond: { flag: { 'npc.lin.curedOnce': false } }, fx: { stat: { infection: -50, hp: 5, energy: -10 }, time: 240, aff: { lin: 3 }, flag: { 'npc.lin.curedOnce': true }, milestone: '林晚把你从感染线上拉回来', goto: 'lin_cure_p3' } },
+      { label: '缓过气来', cond: { flag: { 'npc.lin.curedOnce': true } }, fx: { stat: { infection: -50, hp: 5, energy: -10 }, time: 240, aff: { lin: 2 }, goto: 'lin_cure_p3' } }
+    ]);
+
+  P('lin_cure_p3',
+    '她坐在床边，盯着你的瞳孔看了很久，确认里面没有那种浑浊，才允许自己靠进椅背，长长吐出一口气。“听着。”她的声音平得刻意，“我允许你受伤，允许你生病，允许你把我的绷带用成消耗品——”她俯下身，额头抵着你的，“唯独不允许你，变成我救不了的东西。”',
+    [{ label: '“记住了。”', fx: {} }]);
+
+  // ---- lin_s4_2 羁绊成人变体（可重复） --------------------------------------
+  events.register({
+    id: 'lin_s4_2', type: 'story', npc: 'lin', when: ['talk'], once: false, cooldown: 2880, priority: 2,
+    cond: { loc: 'hospital', timeRange: LIN_NIGHT, stage: { lin: { gte: 4 } }, flag: { 'npc.lin.s3_4': true } },
+    passage: 'lin_s4_2_p1'
+  });
+
+  P('lin_s4_2_p1',
+    '值班室的台灯又亮到深夜。你进门时，[npc:lin]林晚[/npc]正对着排班表出神，听见动静回头看你，目光在你脸上停了几秒，然后起身，很自然地反锁了门。“今晚没有病人。”她摘下发绳走过来，“医嘱：你需要休息。我也是。”',
+    [
+      { label: '遵医嘱', fx: { goto: 'lin_s4_2_p2' } },
+      { label: '“今晚真得回去。”', fx: { goto: 'lin_s4_2_pno' } }
+    ]);
+
+  P('lin_s4_2_pno',
+    '“嗯。”她把你送到走廊口，替你理了理衣领，动作像检查绷带一样认真，“那就把觉补回来——这也是医嘱。”',
+    [{ label: '（离开）', fx: {} }]);
+
+  P('lin_s4_2_p2',
+    function (s) {
+      if (s.player.gender === 'f') {
+        return '这一次她不再需要你的声音来确认什么。她把你按在行军床上，吻得慢条斯理，医生的手一寸寸把你拆开，准确，专注，带着一点报复般的耐心——上次你弄乱她呼吸的账，她今晚全数讨回去。你在她手里到达的时候，她撑在你上方看着你，眼睛亮得像换了一个人。“这个表情，”她低声说，“归我。”';
+      }
+      return '这一次她不再需要黑暗壮胆。她把你推倒在行军床上，跨坐上来，台灯也不关，解衬衫扣子的手指又稳又慢——存心的。她引着你进入，节奏由她定，你想快，她就俯身咬住你的下唇不许。到最后她伏在你胸口喘，心跳撞着心跳，好半天，哑着嗓子开口：“体检结论：心肺功能良好。”顿了顿，“下周复查。”';
+    },
+    [{ label: '（拥着她睡去）', fx: { stat: { energy: -18, sanity: 6 }, time: 120, aff: { lin: 4 } } }]);
+
+})();

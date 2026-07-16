@@ -338,3 +338,267 @@
     [{ label: '（离开）', fx: { flag: { 'npc.qin.s2_4': true }, milestone: '老秦的自白' } }]);
 
 })();
+
+/* =============================================================================
+ * qin.js·后半（M6：亲密→羁绊）
+ * -----------------------------------------------------------------------------
+ * 节拍一览（衔接 M5：stage 2 + npc.qin.s2_4:true 起步）：
+ *   亲密（stage 3）
+ *     qin_s3_1  大型事件：屠夫帮伏击老秦，主角救援（enter @bar 夜；败分支=
+ *               搬救兵迟到 rescueLate，不掉线）
+ *     qin_s3_2  关系转折 + 升阶→亲密（talk，需好感≥60；可拒绝，冷却后再谈）
+ *     qin_s3_3  首次成人事件（talk @bar 深夜，性别分支；可拒绝，冷却后再谈）
+ *     qin_s3_4  卷宗对账：叛变旧部定名孟九，复仇线开启（talk @police 白天）
+ *   羁绊（stage 4）
+ *     qin_s4_1  升阶→羁绊：共守酒吧据点约定（talk，需好感≥80；首次登记周五
+ *               巡逻之夜日历，见 bookWeekly）
+ *     qin_patrol_1  周期事件：每周五晚巡逻之夜（scheduled，weekday 4）
+ *     qin_hunt  复仇长期循环：扫孟九的据点，永远差一步（talk，冷却 3 天，无终局）
+ *     qin_s4_2  羁绊成人变体（talk @bar 深夜，可重复，冷却 2 天，priority 2）
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  var story = G.data.story, events = G.data.events;
+
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+  var NIGHT_BAR = [1140, 120];
+  var DAY_POLICE = [480, 1020];
+
+  // 周期事件首次登记：算到下一个目标星期几，写一条无 eventId 的日历备忘。
+  // guardFlag 防止段落重复渲染时重复登记（text 函数副作用，M5 met 联动同法）。
+  function bookWeekly(guardFlag, targetWd, minute, label) {
+    if (G.engine.getFlag(guardFlag)) return;
+    G.engine.setFlag(guardFlag, true);
+    var p = G.state.player;
+    var diff = (targetWd - (p.day % 7) + 7) % 7;
+    if (!diff) diff = 7;
+    G.state.calendar.appointments.push({ day: p.day + diff, minute: minute, label: label, eventId: null, done: false });
+  }
+
+  // ==========================================================================
+  // 亲密（stage 3）
+  // ==========================================================================
+
+  // ---- qin_s3_1 大型事件：北巷救援 -------------------------------------------
+  events.register({
+    id: 'qin_s3_1', type: 'story', npc: 'qin', when: ['enter'], once: true, priority: 9,
+    cond: { loc: 'bar', timeRange: NIGHT_BAR, stage: { qin: 2 }, flag: { 'npc.qin.s2_4': true, 'npc.qin.s3_1': false } },
+    passage: 'qin_s3_1_p1'
+  });
+
+  P('qin_s3_1_p1',
+    '你一进门就发现酒吧不对劲：没有酒令声，人人的眼睛都往门口瞟。[npc:su]苏曼[/npc]快步迎上来，指甲掐进你的胳膊，“老秦傍晚去盯屠夫帮往码头去的车队，说好九点前回来，现在过了两个钟头——跑腿的孩子说，北巷那头有哨子声，还有打斗声。”',
+    [
+      { label: '抄家伙就走', fx: { time: 15, goto: 'qin_s3_1_p2' } },
+      { label: '让苏曼备好热水纱布，再动身', fx: { time: 20, goto: 'qin_s3_1_p2' } }
+    ]);
+
+  P('qin_s3_1_p2',
+    '北巷堵着一辆熄了火的货车，车灯还亮着，把巷子劈成明暗两半。[npc:qin]老秦[/npc]被逼在一截断墙后面，左腿钉着一支[blood]弩箭[/blood]，手里的钢管拄地撑着身子。四条人影正围着断墙收口子，袖口都缠着暗红布条，其中一个仰着头吹哨——他们在叫人。',
+    [
+      { label: '冲进灯光里，和他背靠背', fx: { combat: 'thug_squad', goto: 'qin_s3_1_p3' } },
+      { label: '摸黑绕到货车后，先放倒吹哨的', cond: { skill: 'melee' }, fx: { stat: { energy: -8 }, combat: 'thug_patrol', goto: 'qin_s3_1_p3' } },
+      { label: '人手太少，退回酒吧搬救兵', fx: { time: 50, stat: { energy: -8 }, flag: { 'npc.qin.rescueLate': true }, goto: 'qin_s3_1_p3b' } }
+    ]);
+
+  P('qin_s3_1_p3',
+    '你架起[npc:qin]老秦[/npc]的胳膊撤出北巷，身后的哨声追了两条街，终于断了。他一路咬着牙没吭声，到了亮处你才看清，[blood]弩箭[/blood]从大腿外侧穿进去，裤腿浸得发黑。“埋伏。”他喘着说，“有人喊了我的旧警衔——是孟九的人，冲我来的。”',
+    [{ label: '架着他回酒吧', fx: { time: 40, stat: { energy: -10 }, goto: 'qin_s3_1_p4' } }]);
+
+  P('qin_s3_1_p3b',
+    '等你带着苏曼雇的两个看场汉子赶回北巷，巷子已经空了，断墙下的碎砖被血浸黑了一片。[npc:qin]老秦[/npc]靠在墙根，自己把[blood]弩箭[/blood]拔了，用皮带勒着大腿根，脸白得像纸。“谁让你回去的。”他骂人的声音虚得没了火气，“下回……别把背后交给别人。”',
+    [{ label: '架着他回酒吧', fx: { time: 40, stat: { energy: -8 }, goto: 'qin_s3_1_p4' } }]);
+
+  P('qin_s3_1_p4',
+    function (s) {
+      var mid = s.player.skills.bandage
+        ? '你按林晚教的法子清创、加压，手没有抖，[npc:qin]老秦[/npc]全程盯着房梁，只在收针那一下闷哼了一声。'
+        : '你笨手笨脚地帮苏曼打下手，烈酒浇上伤口的时候，[npc:qin]老秦[/npc]的指节把桌沿抠得咯咯响。';
+      return '后屋的桌子被苏曼铺成了临时的病床。' + mid + '烧到后半夜，他半昏半醒，抓着你的手腕不放，翻来覆去只有一句话：“别一个人去码头……”';
+    },
+    [
+      { label: '守到他烧退', cond: { flag: { 'npc.qin.rescueLate': false } }, fx: { flag: { 'npc.qin.s3_1': true }, aff: { qin: 8 }, time: 180, stat: { energy: -12 }, milestone: '从屠夫帮的伏击里救回老秦' } },
+      { label: '守到他烧退', cond: { flag: { 'npc.qin.rescueLate': true } }, fx: { flag: { 'npc.qin.s3_1': true }, aff: { qin: 4 }, time: 180, stat: { energy: -12 }, milestone: '老秦从伏击里捡回一条命' } }
+    ]);
+
+  // ---- qin_s3_2 关系转折 + 升阶→亲密 ----------------------------------------
+  // 可拒绝不落死局：不 once，冷却一天；接受才升阶写 flag。
+  events.register({
+    id: 'qin_s3_2', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'bar', timeRange: NIGHT_BAR, stage: { qin: 2 }, flag: { 'npc.qin.s3_1': true, 'npc.qin.s3_2': false }, aff: { qin: { gte: 60 } } },
+    passage: 'qin_s3_2_p1'
+  });
+
+  P('qin_s3_2_p1',
+    '后屋里药味盖过了酒味。[npc:qin]老秦[/npc]的腿伤收了口，人已经能扶着桌子练站，见你来，他让你帮他换最后一次药。绷带打完结，他忽然按住你收拾东西的手。“北巷那晚，我以为要交代了。”他的拇指在你手背上压了压，轻得不像他，“闭眼前想的不是孟九，不是旧账——是你。这话，我只说一遍。”',
+    [
+      { label: '反手握住他', fx: { goto: 'qin_s3_2_p2' } },
+      { label: '“我们是过命的交情，别的我没想过。”', fx: { goto: 'qin_s3_2_pno' } }
+    ]);
+
+  P('qin_s3_2_pno',
+    '[npc:qin]老秦[/npc]收回手，点了下头，神色没什么变化，只有下颌线绷了一瞬。“当我没说。”他把绷带卷好丢回你手里，“药钱记我账上。”这道门没有关死——他不是催人的性子。',
+    [{ label: '（离开）', fx: {} }]);
+
+  P('qin_s3_2_p2',
+    '他的手把你的手整个包进去，茧子磨得你掌心发烫。[npc:qin]老秦[/npc]拉着你站起来，低头吻你，用力，笨，像把这些年没说出口的话一次补齐。松开的时候他呼吸不稳，额头抵着你的：“往后，你的背后归我。”',
+    [{ label: '“那你的背后，归我。”', fx: { stage: { qin: 3 }, flag: { 'npc.qin.s3_2': true }, aff: { qin: 6 }, milestone: '与老秦挑明了关系' } }]);
+
+  // ---- qin_s3_3 首次成人事件 ------------------------------------------------
+  events.register({
+    id: 'qin_s3_3', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'bar', timeRange: [1320, 120], stage: { qin: { gte: 3 } }, flag: { 'npc.qin.s3_3': false } },
+    passage: 'qin_s3_3_p1'
+  });
+
+  P('qin_s3_3_p1',
+    '打烊后，[npc:su]苏曼[/npc]上楼前朝你们的方向扬了扬眉，什么都没说。[npc:qin]老秦[/npc]闩上门，把腰上的钥匙串解下来放在桌上——那动作像卸甲。后屋只点一盏油灯，他站在灯影里看你：“留下？”他问得很直，“现在走，我送你回去。往后也一样，你说了算。”',
+    [
+      { label: '留下', fx: { goto: 'qin_s3_3_p2' } },
+      { label: '今晚先回去', fx: { goto: 'qin_s3_3_pout' } }
+    ]);
+
+  P('qin_s3_3_pout',
+    '他真送你回家，一路无话，把外套披在你肩上，在安全屋门口站到你插好门闩才走。你从窗缝里看他的背影汇进夜色，步子还有一点跛。',
+    [{ label: '（睡下）', fx: { time: 30 } }]);
+
+  P('qin_s3_3_p2',
+    function (s) {
+      var head = '油灯把两个人的影子投在同一面墙上。他脱了上衣，肩背上的旧[blood]伤疤[/blood]一条压着一条，新伤在大腿外侧，还覆着纱布。他解你衣扣的手很慢，像拆一个不许出错的引信，呼吸却越来越沉。';
+      if (s.player.gender === 'f') {
+        return head + '他把你放倒在那张窄床上，掌心从你的腰侧一路碾上去，糙得像砂纸，却烫。你一发抖，他就停下来等你，再继续。进入你的时候他撑在你上方，手臂绷成一条硬线，动作沉而慢，一下一下都压到底，把你的喘息尽数撞散。你抓着他的肩胛，他喉咙里滚出一声压哑的低吼，伏下来把你的名字咬在齿间，床板的吱呀声和你漏出来的声音，被他用掌心一起捂进胸口。';
+      }
+      return head + '他把你按坐在床沿，单膝跪下来，握住你的动作没有半分犹豫——这个一辈子讲规矩的男人，把你也划进了他的规矩之内。他的手掌粗粝滚烫，节奏沉稳得不容抗拒，你仰头抵着墙，喘息压不住，他抬眼看你，眼神烫得吓人。后来他把你翻过去压在床上，胸膛贴着你的背，含着你的后颈，身体沉进来的时候，他的呼吸终于乱了，一声低吼咬碎在你肩上。';
+    },
+    [{ label: '回应他', fx: { goto: 'qin_s3_3_p3' } }]);
+
+  P('qin_s3_3_p3',
+    '事后他把你圈在臂弯里，手臂沉得像门闩。这个男人话仍旧少，只用拇指一下一下摩挲你的肩头，烟点了没抽，在烟灰缸里自己烧完。“睡吧。”他把毯子往你这边掖了掖，“我守着。”你在他的心跳声里往下沉——那声音慢，稳，像一座不会塌的钟。',
+    [{ label: '（在他怀里睡去）', fx: { stat: { energy: -18, sanity: 6 }, time: 360, aff: { qin: 8 }, flag: { 'npc.qin.s3_3': true }, milestone: '与老秦的第一夜' } }]);
+
+  // ---- qin_s3_4 卷宗对账：孟九 ----------------------------------------------
+  events.register({
+    id: 'qin_s3_4', type: 'story', npc: 'qin', when: ['talk'], once: true, priority: 5,
+    cond: { loc: 'police', timeRange: DAY_POLICE, stage: { qin: 3 }, flag: { 'npc.qin.s3_2': true, 'npc.qin.s3_4': false } },
+    passage: 'qin_s3_4_p1'
+  });
+
+  P('qin_s3_4_p1',
+    '警局档案室收拾出了一张干净桌子。[npc:qin]老秦[/npc]把那份[item]旧案卷宗[/item]解开麻绳，第一次推到你面前。照片上的男人三十出头，笑得很正派。“孟九。我带了他六年，枪法是我一手教的。”他的手指压在照片一角，“现在他替屠夫帮管货运。北巷的伏击是他的手笔——他知道我认路的习惯。”',
+    [
+      { label: '“要收网的时候，带上我。”', fx: { goto: 'qin_s3_4_p2' } },
+      { label: '问他打算怎么收', fx: { goto: 'qin_s3_4_p2q' } }
+    ]);
+
+  P('qin_s3_4_p2',
+    '“好。”他答得没有一秒迟疑，像这个字早就备好了。他把照片翻过去扣在桌上，“但记三条：不打无准备的仗，不碰他的正面火力，不在我看不见的地方逞英雄。”他顿了顿，又补了第四条，“死在我前头，我跟你没完。”',
+    [{ label: '记下', fx: { aff: { qin: 5 }, flag: { 'npc.qin.s3_4': true }, milestone: '老秦翻开了卷宗' } }]);
+
+  P('qin_s3_4_p2q',
+    '“一条一条查。”他把卷宗一页页码齐，“他手底下的点，他的货路，他换睡觉地方的规律。急不得——当年我教他反侦查，现在得连本带利收回来。”他合上卷宗看你，“这案子结不了那么快，你有的是机会搭手。”',
+    [{ label: '“随时。”', fx: { aff: { qin: 5 }, flag: { 'npc.qin.s3_4': true }, milestone: '老秦翻开了卷宗' } }]);
+
+  // ==========================================================================
+  // 羁绊（stage 4）
+  // ==========================================================================
+
+  // ---- qin_s4_1 升阶→羁绊：共守避风港 ---------------------------------------
+  events.register({
+    id: 'qin_s4_1', type: 'story', npc: 'qin', when: ['talk'], once: true, priority: 6,
+    cond: { loc: 'bar', timeRange: NIGHT_BAR, stage: { qin: 3 }, flag: { 'npc.qin.s3_4': true, 'npc.qin.s4_1': false }, aff: { qin: { gte: 80 } } },
+    passage: 'qin_s4_1_p1'
+  });
+
+  P('qin_s4_1_p1',
+    '酒吧里多了几样新东西：窗上钉了铁条，天台加了一个瞭望位，吧台底下藏了一根备用的撬棍。[npc:qin]老秦[/npc]带你一样样看过去，像交接防务。“这店，是我欠下的一笔旧账，守了三年。”他在天台的矮墙边站定，城市的黑影在他身后铺开，“往后，我想把它守成你我的地方。每周五晚上，陪我巡一圈这条街——不是差事，是请求。”',
+    [
+      { label: '“一言为定。”', fx: { goto: 'qin_s4_1_p2' } },
+      { label: '伸出手，和他击掌为约', fx: { goto: 'qin_s4_1_p2' } }
+    ]);
+
+  P('qin_s4_1_p2',
+    function () {
+      bookWeekly('npc.qin.patrolBooked', 4, 1200, '和老秦的巡逻之夜');
+      return '“一言为定。”他难得地笑了一下，皱纹里全是灯影。楼下苏曼在喊他搬酒，他应了一声，却先把一枚黄铜钥匙塞进你手心——酒吧后门的。“风大雨大，记得有地方回。”';
+    },
+    [{ label: '收下钥匙', fx: { stage: { qin: 4 }, flag: { 'npc.qin.s4_1': true }, aff: { qin: 5 }, milestone: '与老秦共守避风港' } }]);
+
+  // ---- qin_patrol_1 周期事件：巡逻之夜（每周五晚） ---------------------------
+  events.register({
+    id: 'qin_patrol_1', type: 'scheduled', npc: 'qin', priority: 4,
+    cond: { loc: 'bar', weekday: 4, timeRange: [1170, 1410], stage: { qin: { gte: 4 } } },
+    passage: 'qin_patrol_p1'
+  });
+
+  P('qin_patrol_p1',
+    function () {
+      var pool = [
+        '巡逻从酒吧后门开始，顺着街沿走到废加油站的路口再折回来。[npc:qin]老秦[/npc]的手电压得很低，光只扫墙根和车底，你们一前一后，步子踩在同一个点上。',
+        '今晚有风，卷闸门在整条街上哐当作响。[npc:qin]老秦[/npc]挨家试过临街的门锁，把一扇被风掀开的窗从外面别死，“空屋子，也不能便宜了野狗。”',
+        '路过街角那辆烧空的公交车，[npc:qin]老秦[/npc]照例用钢管敲了敲车壳，听三秒，再走。你问过他为什么，他说这叫报数——车里要是住进了新邻居，得先知道。'
+      ];
+      return pool[Math.floor(Math.random() * pool.length)];
+    },
+    [
+      { label: '巡完这一圈', fx: { time: 90, stat: { energy: -8 }, aff: { qin: 3 }, appointment: { inDays: 7, minute: 1200, label: '和老秦的巡逻之夜' }, goto: 'qin_patrol_p2' } },
+      { label: '墙根有动静，过去看看', cond: { chance: 0.5 }, fx: { combat: 'zombie_pair', goto: 'qin_patrol_p2c' } }
+    ]);
+
+  P('qin_patrol_p2',
+    '回到酒吧门口，[npc:qin]老秦[/npc]把手电别回腰上，照例说一句“辛苦”。这条街今晚又是干净的——有些事没有终点，巡着巡着，就成了两个人的日子。',
+    [{ label: '（进屋喝口热的）', fx: {} }]);
+
+  P('qin_patrol_p2c',
+    '解决了墙根那两只不安分的东西，[npc:qin]老秦[/npc]用鞋尖翻了翻尸体，确认不是熟面孔才直起腰。“这条街，”他把钢管扛回肩上，“有我们巡一天，它就干净一天。”',
+    [{ label: '巡完剩下半圈', fx: { time: 60, stat: { energy: -6 }, aff: { qin: 3 }, appointment: { inDays: 7, minute: 1200, label: '和老秦的巡逻之夜' } } }]);
+
+  // ---- qin_hunt 复仇长期循环（无终局） --------------------------------------
+  events.register({
+    id: 'qin_hunt', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 4320, priority: 2,
+    cond: {
+      anyOf: [{ loc: 'bar', timeRange: NIGHT_BAR }, { loc: 'police', timeRange: DAY_POLICE }],
+      stage: { qin: { gte: 4 } }
+    },
+    passage: 'qin_hunt_p1'
+  });
+
+  P('qin_hunt_p1',
+    '[npc:qin]老秦[/npc]把烟盒背面的城区图递给你，上面又多了一个红圈——孟九手底下的点，有时是个收货的窝棚，有时是个放哨的楼口。图上的红圈画了又划掉，划掉的比留着的多。“扫了它。就咱们俩，老规矩。”',
+    [
+      { label: '抄家伙跟他走', fx: { time: 60, combat: 'thug_patrol', goto: 'qin_hunt_p2' } },
+      { label: '这两天缓缓再去', fx: {} }
+    ]);
+
+  P('qin_hunt_p2',
+    '窝点清了，人堆里照例没有孟九。[npc:qin]老秦[/npc]翻出半本压皱的货单，就着火光看完，塞进怀里，把窝棚里能拆的油和粮分你一半。“又近了一步。”这句话你听过很多遍了，可他每次说，眼睛里的火都是新的。',
+    [{ label: '收好战利品', fx: { bullets: 8, stat: { energy: -10 }, aff: { qin: 2 }, time: 90 } }]);
+
+  // ---- qin_s4_2 羁绊成人变体（可重复） --------------------------------------
+  events.register({
+    id: 'qin_s4_2', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 2880, priority: 2,
+    cond: { loc: 'bar', timeRange: [1320, 120], stage: { qin: { gte: 4 } }, flag: { 'npc.qin.s3_3': true } },
+    passage: 'qin_s4_2_p1'
+  });
+
+  P('qin_s4_2_p1',
+    '打烊了，[npc:qin]老秦[/npc]闩门的动作在半路停下，回头看你。灯没灭，他也不说话——这个男人到现在也学不会说那种话，只把手朝你伸过来，掌心向上，等着。',
+    [
+      { label: '把手放上去', fx: { goto: 'qin_s4_2_p2' } },
+      { label: '今晚太累了', fx: { goto: 'qin_s4_2_pno' } }
+    ]);
+
+  P('qin_s4_2_pno',
+    '“嗯。”他一点不勉强，拿外套裹住你往门外送，“回去睡。路上有事就吹哨，我听得见。”',
+    [{ label: '（离开）', fx: {} }]);
+
+  P('qin_s4_2_p2',
+    function (s) {
+      if (s.player.gender === 'f') {
+        return '这一次没有第一夜的小心翼翼。他熟知你身上每一处会发抖的地方，手掌一寸寸碾过去，慢条斯理，像巡他那条街。你被他拆得七零八落，骂他慢，他低笑一声，俯身堵住你的嘴，腰上的动作却仍旧不肯快——直到你收紧了缠着他的腿，他才终于失了那份稳，喘息砸在你耳边，又急又烫。';
+      }
+      return '这一次没有第一夜的试探。他把你抵在门板上，吻从下颌一路啃到喉结，手掌熟门熟路地探下去，力道和节奏都拿捏得像巡他那条街。你抓着他的背要更多，他喉咙里滚出低笑，把你打横按回床上，身体压下来，沉，烫，呼吸在你颈窝里越来越乱，最后一声闷哼咬在你肩上，像盖了个章。';
+    },
+    [{ label: '（相拥而眠）', fx: { stat: { energy: -18, sanity: 6 }, time: 120, aff: { qin: 4 } } }]);
+
+})();
