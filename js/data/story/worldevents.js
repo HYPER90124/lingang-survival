@@ -160,7 +160,7 @@
   ev('rare_campus_1', { loc: 'campus', chance: 0.05 }, 4320, 'rare_campus_1_p');
 
   // ---- metro ----------------------------------------------------------------
-  P('sv_metro_1_p', '隧道口的瓷砖墙上刻满了正字，一天一道，刻痕从深到浅排出去几百个。最新的一道边缘还发白——今天的，已经有人来刻过了。', [
+  P('sv_metro_1_p', '隧道口的瓷砖墙上刻着成排的正字，一天一道，刻痕从深到浅排出去八九十道。最新的一道边缘还发白——今天的，已经有人来刻过了。', [
     { label: '数一数刻了多少天', fx: { stat: { sanity: -2 } } },
     { label: '在旁边也刻下一道', fx: { stat: { sanity: 1 } } }
   ]);
@@ -189,7 +189,7 @@
   ]);
   ev('amb_park_2', { loc: 'park', timeRange: [480, 1020], chance: 0.15 }, 480, 'amb_park_2_p');
 
-  P('rare_park_1_p', '一只橙色的救生箱被江水冲上滩涂，卡在石缝里，封条都还没破——某条撤离船上的东西，漂了三年，靠了岸。', [
+  P('rare_park_1_p', '一只橙色的救生箱被江水冲上滩涂，卡在石缝里，封条都还没破——某条撤离船上的东西，漂了两个月，靠了岸。', [
     { label: '撬开救生箱', fx: { item: { militaryfirstaid: 1, rope: 1, cannedfish: 2 }, time: 15 } }
   ]);
   ev('rare_park_1', { loc: 'park', chance: 0.05 }, 4320, 'rare_park_1_p');
@@ -251,7 +251,7 @@
   ]);
   ev('sv_dock_1', { loc: 'dock', chance: 0.1 }, 720, 'sv_dock_1_p');
 
-  P('enc_dock_2_p', '夜里的集装箱巷道像迷宫，你的脚步声引来了回应——不止一处，快得贴着铁皮打滑，从三个方向包过来。', [
+  P('enc_dock_2_p', '夜里的集装箱巷道像迷宫，你的脚步声引来了回应——不止一处，快得贴着铁皮打滑，从两个方向包过来。', [
     { label: '抢在合围前打出去', fx: { combat: 'runner_pack' } },
     { label: '爬上箱顶走高路', fx: { stat: { energy: -8 }, time: 15 } }
   ]);
@@ -280,8 +280,8 @@
   ev('rare_checkpoint_1', { loc: 'checkpoint', chance: 0.04 }, 4320, 'rare_checkpoint_1_p');
 
   // ---- sewer ----------------------------------------------------------------
-  P('sv_sewer_1_p', '手电扫过管壁，一行刻痕拦住你的光：「往东，第三个爬梯，有光」。刻痕旁边标着日期——三年前的。你顺着箭头看过去，那条支道早就塌死了。', [
-    { label: '（希望他当年爬上去了）', fx: { stat: { sanity: -3 } } }
+  P('sv_sewer_1_p', '手电扫过管壁，一行刻痕拦住你的光：「往东，第三个爬梯，有光」。刻痕旁边标着日期——两个月前的。你顺着箭头看过去，那条支道早就塌死了。', [
+    { label: '（希望他当时爬上去了）', fx: { stat: { sanity: -3 } } }
   ]);
   ev('sv_sewer_1', { loc: 'sewer', chance: 0.12 }, 720, 'sv_sewer_1_p');
 
@@ -291,7 +291,12 @@
   ]);
   ev('enc_sewer_2', { loc: 'sewer', chance: 0.15 }, 360, 'enc_sewer_2_p');
 
-  P('rare_sewer_1_p', '高处一截废管里塞着防水布包——有人的藏匿点，手法专业，但布包上的灰说明主人很久没来了。里面是电池、绳子和一小包子弹。看手法，不是灰猫的路数。', [
+  P('rare_sewer_1_p',
+    function (s) {
+      var base = '高处一截废管里塞着防水布包——有人的藏匿点，手法专业，但布包上的灰说明主人很久没来了。里面是电池、绳子和一小包子弹。';
+      if (s.npcs.mao && s.npcs.mao.met) base += '看手法，不是灰猫的路数。';
+      return base;
+    }, [
     { label: '收走无主的存货', fx: { item: { battery: 1, rope: 1 }, bullets: 5, time: 10 } }
   ]);
   ev('rare_sewer_1', { loc: 'sewer', chance: 0.05, has: { item: 'flashlight' } }, 4320, 'rare_sewer_1_p');
@@ -467,7 +472,7 @@
   // ---- 尸潮夜：室外遭遇池（危险度整体上调的实现载体） ------------------------
   var HORDE_OUT = { anyOf: [{ loc: 'residential' }, { loc: 'hospital' }, { loc: 'police' }, { loc: 'campus' }, { loc: 'metro' }, { loc: 'park' }, { loc: 'gas' }, { loc: 'mall' }, { loc: 'dock' }, { loc: 'checkpoint' }, { loc: 'sewer' }] };
 
-  P('horde_enc_1_p', '潮头的散兵先到了——七八条影子从巷口漫进来，见活物就扑，身后的闷雷声还在逼近。', [
+  P('horde_enc_1_p', '潮头的散兵先到了——两条跑得最快的影子从巷口窜进来，见活物就扑，身后的闷雷声还在逼近。', [
     { label: '抢在合流前杀出去', fx: { combat: 'runner_pack' } },
     { label: '躲进高处等它们过去', fx: { stat: { energy: -10, sanity: -4 }, time: 60 } }
   ]);
@@ -508,7 +513,7 @@
   events.register({ id: 'rain_end', type: 'story', when: [], once: false, priority: 4, passage: 'rain_end_p1' });
 
   P('rain_end_p1',
-    '雨脚渐渐收了，云缝里漏下几缕暗金色的天光。屋檐还在滴水，一声一声，把黄昏敲得很静。',
+    '雨脚渐渐收了，云层裂开几道缝，露出洗过的夜色和几点星子。屋檐还在滴水，一声一声，把夜敲得很静。',
     [{ label: '（雨停了）', fx: { flag: { 'world.rainDay': false } } }]);
 
   // 雨天采集加成（公园）
@@ -580,7 +585,7 @@
   P('butcher_world_4_p',
     function () {
       var head = '商场外围的断墙后传来打斗声——是屠夫帮自己人在火并，两拨人打得头破血流，谁也没心思看路。';
-      if (G.engine.stageGet('qin') >= 3) {
+      if (G.engine.getFlag('npc.qin.s3_4')) {
         head += '有人被按在地上还不服：“凭什么孟九管货又管账！”看来老秦说的「连本带利」，有人替他先讨上了。';
       }
       return head;

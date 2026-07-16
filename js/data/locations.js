@@ -38,7 +38,7 @@
 
     home: {
       name: '安全屋',
-      descDay: '客厅地板铺着旧毯子，窗帘拉得只留一条缝，桌上摆着你这几天攒下的物资。',
+      descDay: '客厅地板铺着旧毯子，窗帘拉得只留一条缝，桌上摆着从这屋里翻出来的物资。',
       descNight: '你把门栓插死，屋外的声响隔着一层砖墙，烛火晃得墙上影子跟着抖。',
       actions: [
         { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
@@ -130,7 +130,7 @@
 
     bar: {
       name: '酒吧·避风港',
-      descDay: '白天的酒吧没什么人，苏曼在吧台后面擦杯子，老秦缩在角落打盹。',
+      descDay: '白天的酒吧没什么人，苏曼在吧台后面擦杯子，半数椅子还倒扣在桌面上，油灯只点了靠里的几盏。',
       descNight: '灯光昏黄，酒气混着烟味，老秦在门口守着，没人敢在这里动手。',
       actions: [
         { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
@@ -525,7 +525,7 @@
   ]);
   event('amb_market_1', 'market', { cond: { chance: 0.1 }, cooldown: 300 }, 'amb_market_1_p');
 
-  passage('enc_market_1_p', '打烊后的货架间，两只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
+  passage('enc_market_1_p', '货架深处一阵哐啷，两只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
     { label: '动手解决', fx: { combat: 'zombie_pair' } },
     { label: '退到门口', fx: { stat: { energy: -3 } } }
   ]);
@@ -564,7 +564,7 @@
   passage('amb_bar_1_p', '苏曼把一杯水推到你面前，没多说什么，转身去擦别的桌子。', [
     { label: '喝掉', fx: { stat: { thirst: 10 } } }
   ]);
-  event('amb_bar_1', 'bar', { cond: { chance: 0.15 }, cooldown: 480 }, 'amb_bar_1_p');
+  event('amb_bar_1', 'bar', { cond: { chance: 0.15, met: 'su' }, cooldown: 480 }, 'amb_bar_1_p');
 
   passage('amb_bar_2_p', '角落里有人小声议论屠夫帮又抢了一批货，声音压得很低。', [
     { label: '听一耳朵', fx: { stat: { sanity: 1 } } }
@@ -692,7 +692,7 @@
   ]);
   event('amb_sewer_1', 'sewer', { cond: { chance: 0.15 }, cooldown: 300 }, 'amb_sewer_1_p');
 
-  passage('enc_sewer_1_p', '水面漂来的东西突然动了一下，朝你的方向扑来。', [
+  passage('enc_sewer_1_p', '水面漂来的两团东西先后动了起来，贴着水皮朝你扑来。', [
     { label: '就地迎战', fx: { combat: 'crawler_ambush' } },
     { label: '蹚水后退', fx: { stat: { energy: -6 } } }
   ]);
