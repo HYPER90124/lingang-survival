@@ -26,13 +26,15 @@
   // ---- 可调平衡常量（M9） --------------------------------------------------
   var TUNE = {
     hungerPer10:   0.35,   // 每 10 分钟饥饿值下降（越低越饿）
-    thirstPer10:   0.45,   // 每 10 分钟口渴值下降
+    thirstPer10:   0.40,   // 每 10 分钟口渴值下降（水源仅 2 处，较饥饿略放宽）
     energyPer10:   0.30,   // 清醒时每 10 分钟精力下降
     starveHpPer10: 0.60,   // 饥或渴低于阈值时每 10 分钟额外掉 hp
     sleepEnergyPerHour: 12, // 睡眠每小时恢复精力
     sleepHpPerHour:     1.5,// 睡眠每小时恢复 hp
     infectionDaily:     3,  // 已感染时每日进展（0 则不动）
     addictionDaily:     4,  // 成瘾时每日上升
+    scavengeRegenPerDay: 3, // 每日各地点搜刮计数回落（模拟物资缓慢补给，避免永久枯竭）
+    scavengeFloor:      0.5, // 搜刮命中率保底下限（被搜空的地点仍有一半基础产出）
     // 阈值线（见 docs/Schema.md「阈值效果」）
     T_STARVE: 20,   // 饥/渴 < 此值开始掉血
     T_ENERGY: 15,   // 精力 < 此值行动耗时 +50%
@@ -108,6 +110,13 @@
     var st = S().player.stats;
     if (st.infection > 0) G.engine.statAdd('infection', TUNE.infectionDaily);
     if (st.addiction > TUNE.T_ADDICT) G.engine.statAdd('addiction', TUNE.addictionDaily);
+    // 地点物资缓慢补给：搜刮计数每日回落（decay = max(.25, 1-count*.12)），
+    // 避免同一地点被搜空后永久停在 25% 掉率，保证中后期食水「略紧但可维持」。
+    var sc = S().scavenge || {};
+    for (var loc in sc) {
+      sc[loc] = Math.max(0, sc[loc] - TUNE.scavengeRegenPerDay);
+      if (sc[loc] === 0) delete sc[loc];
+    }
     // scheduled 事件按 weekday 调度 + 毒瘾发作等由事件层在 'tick' 时机统一命中；
     // 这里仅清理「每日已触发」标记，供 events.js 的 scheduled 去重。
     S().world._firedDay = {};

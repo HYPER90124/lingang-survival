@@ -365,8 +365,11 @@
       return { ok: false, msg: '没有[item]' + (need ? need.name : action.requiresItem) + '[/item]，什么都看不清。' };
     }
 
+    // 命中率随该地点已搜刮次数递减，但保底不低于 scavengeFloor（M9 平衡：
+    // 过低的保底会让被搜空的地点永久失去价值，导致中后期食水必死循环）。
     var count = G.state.scavenge[locId] || 0;
-    var decay = Math.max(0.25, 1 - count * 0.12);
+    var floor = (G.TUNE && G.TUNE.scavengeFloor != null) ? G.TUNE.scavengeFloor : 0.25;
+    var decay = Math.max(floor, 1 - count * 0.12);
     var found = [];
     if (loc.scavengeTable && loc.scavengeTable.length) {
       var tier = pickWeighted(loc.scavengeTable);
