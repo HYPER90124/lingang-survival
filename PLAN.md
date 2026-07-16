@@ -29,13 +29,38 @@
 | M6 | 主要 NPC 剧情·亲密羁绊（成人内容） | fable | ✅ 完成 |
 | M7 | 次要 NPC ×4 全剧情 | fable | ✅ 完成 |
 | M8 | 边缘 NPC + 世界事件池 | fable | ✅ 完成 |
-| M9 | 整合、平衡、打包、部署 Pages | opus | ⬜ 未开始 |
+| M9 | 整合、平衡、打包、部署 Pages | opus | ✅ 完成（v1.0） |
 
 执行顺序：M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9。
 M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M9（2026-07-16, opus）—— v1.0 整合 / 平衡 / 打包 / 部署
+
+**整合测试（Node 全绿）**。四个自动化测试脚本（scratchpad，未入库；harness 用 `vm` 在浏览器语义沙箱里按 index.html 顺序加载全部引擎+数据文件，UI 三件套 render/panels/tags 走 jsdom 单独验）：
+- **引用完整性**（test_integrity）：417 个已注册 passage（全部唯一）+ 207 事件，全量扫描 goto/combat/shop/item/appointment.eventId 引用 **0 断链**；所有 passage 的 `text()` 函数在新档状态下执行 **0 抛错**；**M8 警告的「choice.fx 同写 shop+goto 会丢 goto」全库 0 处命中**（routeNav 顺序 combat>shop>goto 的坑没人踩）。
+- **旗标一致性**（test_flags）：cond 里读到的 105 个 flag **全部**有 fx.flag 写入源（world.* 经 setFlag 文本副作用写入除外），**0 处悬空读**——6 个剧情文件跨线 flag 命名无拼写漂移。
+- **求生驱动**（test_drive）：机器人两性别各多种子驱动，全程搜刮/战斗胜败逃/吃喝/睡眠/存读档/导出导入/搭话/事件触发，**控制台 0 报错**。粗心机器人（乱走、夜里撞尸潮、群战不逃）会早死＝符合「无躺赢」；胜任机器人（test_balance）**30 天生存 5/5**。
+- **单文件验证**（test_built，jsdom 载入 dist/game.html）：开局→建档→移动→5 面板+关系面板→存读档→导出导入 **0 报错**。存档体积：满进度档（10 NPC 全羁绊、70 条日历、40 类道具）导出仅 **16.7KB**，远低于 200KB 目标。
+
+**数值平衡（只改集中常量，改动全部在 `time.js TUNE` + `locations.js` 搜刮保底一行）**：
+- **根因**：`state.scavenge[locId]` 只增不减，地点被搜空后 decay 永久停在 0.25，中后期每次搜刮的「时间消耗」＞「产出」→ 食水必死循环（stationary 探针：修复前最优单点 market 也 0/4 撑不过 30 天）。
+- **三处修复**：① 新增 `TUNE.scavengeFloor=0.5`（locations.js 读取，搜刮命中率保底 0.25→0.5，被搜空地点仍保留一半产出）；② 新增 `TUNE.scavengeRegenPerDay=3`（跨日 dayRollover 里各地点搜刮计数回落，模拟补给）；③ `TUNE.thirstPer10` 0.45→0.40（水源仅 park/market 两处，较饥饿单独放宽）。
+- **效果**：market 单点 30 天 4/4 撑满、胜任玩家 5/5；park（纯水）/residential（纯食）单点仍会饿/渴死＝正确（必须轮换取食水，「奔波」保留）。前期紧张（开局仅铁管+1 食+1 水，stats 70）、中期靠轮换+商店+NPC 赠礼+稀有大宗有余力推剧情。
+- **未动的常量**：战斗 `COMBAT_TUNE` 全保留（胜任机器人战斗胜/逃正常，早期徒手群战致死＝末日生存预期）；毒瘾/感染日结算、阈值线全保留。M8 交接提的「rare_ 收益偏肥」未砍——floor 修复后经济不再通缩，肥一点无碍。
+
+**打包**：`tools/build.js`（`node tools/build.js`）内联 CSS + 21 个 js（顺序照 index.html，自动剔除 _demo.js），产出 `dist/game.html`（约 485KB，未压缩保持可读可审计）。`</script>` 已转义防提前闭合。file:// 直开可玩（localStorage 在真实浏览器可用；jsdom 默认不给 localStorage，故测试里那两条 warn 是环境限制非 bug）。
+
+**部署**：加了根目录 `.nojekyll`（Pages 跳过 Jekyll，原样服务 js/ 目录）。⚠️ **远程仓库创建 + Pages 启用需用户拍板**（公开发布含成人内容、仓库名/公私由用户定）——见对话，未擅自推送。gh 已认证（HYPER90124，repo scope），用户确认后一条命令即可上线。
+
+**后续扩展建议（v1.1+）**：
+- **加 NPC/地点/道具/敌人**：纯数据层，照现有 Schema 直接加文件或往现有文件追加 IIFE，index.html 加一行 `<script>` 引入即可，引擎零改动。新 NPC 记得进 `state.js` 的 `NPC_IDS`（好感/作息/关系面板自动接管）。
+- **技能落地**：`skill:melee/bandage/modding` 已发放但战斗/道具结算暂不读（仅 packmule 有效）。建议在 combat.js/items.js 读取：melee 提近战命中或伤害、bandage 提绷带类 fx、modding 提武器耐久损耗减半。
+- **系统级尸潮夜/雨天修正**：目前尸潮夜「危险度上调」「雨天加成」只在事件层（高频遭遇池 / park 事件），未改 locations.js 的 danger 字段与搜刮表。若要系统级，让引擎读 `world.hordeNight/rainDay` 调 danger/掉率。
+- **真换弹手感**：枪械用武器耐久表示弹匣，无「子弹补耐久」机制（bullets 目前只是硬通货）。要真换弹需加一个消费 bullets 恢复 weapon.durability 的接口。
+- **存档迁移**：改锚点/结构走 `save.js` 的 `migrate()` 版本迁移（`G.SAVE_VERSION` 递增 + normalize 补字段），别裸改字段含义。
 
 ### M8（2026-07-16, fable）
 产出：`js/data/story/minor.js`（边缘三人 11 事件）+ `js/data/story/worldevents.js`（69 事件）。index.html 两文件均已引入（M0 目录清单全部落齐）。**全游戏事件总数 207，其中 M8 新增 80**。Node 冒烟 935 项 8 连跑全绿（全量引用扫描 268 处 goto、边缘三人全流程、15 地点逐一蹲池 ≥3 条、四类状态事件控制台调数值逐一触发、尸潮夜预警→日历→整夜遭遇→黎明退潮全链、雨天开雨→公园加成→定点雨停、屠夫帮变体按主线 flag 切换）。
