@@ -25,7 +25,7 @@
 | M2 | 移动端 UI + 文字标签系统 | sonnet | ✅ 完成 |
 | M3 | 地图、道具、敌人、交易数据 | sonnet | ✅ 完成 |
 | M4 | NPC 框架 + 好感度系统 | opus | ✅ 完成 |
-| M5 | 主要 NPC 剧情·前中期 + 开场 | fable | ⬜ 未开始 |
+| M5 | 主要 NPC 剧情·前中期 + 开场 | fable | ✅ 完成 |
 | M6 | 主要 NPC 剧情·亲密羁绊（成人内容） | fable | ⬜ 未开始 |
 | M7 | 次要 NPC ×4 全剧情 | fable | ⬜ 未开始 |
 | M8 | 边缘 NPC + 世界事件池 | fable | ⬜ 未开始 |
@@ -36,6 +36,34 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M5（2026-07-16, fable）
+产出：`js/data/story/intro.js`（开场 5 段）、`qin.js`（12 事件）、`lin.js`（11 事件 + 约定回访事件）、`mao.js`（10 事件 + 情报 hub）。index.html 已引入四个文件（**新增 intro.js，Schema 目录清单未列，属新增扩展**）。Node 环境 104 项冒烟 5 连跑全绿（开场→三线初遇推到信任满、goto/passage 引用完整性 116 处、升阶好感门槛、once/冷却防重复、拒绝委托不落死局、战斗续接、日历约定强制触发、存读档、灰猫越轨拒绝路线、性别双分支渲染），另有 jsdom 全页面 9 项（index.html 顺序加载→开局创建→开场→酒吧初遇渲染着色）。
+
+**开场**：`intro_wake`（story/enter/once/priority 20，cond `intro.done:false`）在首次进 home 时触发，发放 worn_idcard + 铁管/罐头/瓶装水/绷带，结尾写 `flag intro.done` —— **三线初遇事件都以 `intro.done:true` 为前置**，M6-M8 的新初遇事件也建议照此锁。M2 的角色创建界面未动，开场段落组接在 newGameStart 之后。
+
+**三线 flag 清单（M6 要接，均存 `npc.{id}.*`）**：
+- qin：`s0_1 → s0_2+fetch → s0_3 → s0_4 → s0_5(升1) → s1_1 → s1_2 → s1_3(升2) → s2_1+scout → s2_2+scoutDone(+sawCargo 可选) → s2_3 → s2_4`。M6 从 `s2_4:true, stage:2` 接（大纲：屠夫帮伏击老秦→亲密）。`sawCargo` 是侦查支线可选旗（看到屠夫帮倒卖军用物资），M6+ 可引用可无视。技能 `skill:melee` 已发。
+- lin：`s0_1 → s0_2+fetch → s0_3 → s0_4 → s0_5(升1) → s1_1 → s1_2 → s1_3(升2) → s2_1(+gaveSedative 或 coldTurkey 二选一) → s2_2 → s2_3`。M6 从 `s2_3:true, stage:2` 接（大纲：大学实验楼病毒资料委托→亲密）。戒断路线旗 `gaveSedative`/`coldTurkey` 供后续文案分支。技能 `skill:bandage` 已发。
+- mao：`s0_1(+bought/sawThrough 分支旗) → s0_2(仅 bought，+ateLoss) → s0_3 → s0_4(升1，+intelShop) → s1_1 → s1_2 → s1_3(升2) → s2_1(写 world.sewerShortcut) → s2_2 → s2_3(越轨)`。M6 从 `s2_3:true, stage:2` 接（大纲：地铁隧道被困一夜→亲密）。**世界旗 `world.sewerShortcut` 由 mao_s2_1 落**（M3/M4 交接约定已兑现）。
+
+**升阶门槛写法（M6-M8 沿用）**：升阶事件 cond 同时锁「上一段 flag + `aff:{id:{gte:阈值}}` + `stage:{id:n}`」，fx 写 `stage:{id:n+1}`；好感靠剧情节拍 + 日常搭话/送礼补足，三线剧情节拍好感合计约到阈值的 70-80%，留 20-30% 给日常互动，节奏实测 2-4 个游戏日一阶。
+
+**新验证的写法模式（M6-M8 可直接抄）**：
+- 委托类节拍：不 once + `cooldown:1440` + 「接受才写 flag」→ 拒绝后次日可再谈，不落死局；接受的 fx 里写 `appointment:{inDays,minute,label}` 登日历（无 eventId 就只是日历备忘，到期自动 done）。
+- 约定回访：`lin_promise_1` 用 **`when:[]`**（空数组）注册 → 不进任何常规触发池，只能被 appointment 的 `eventId` 强制触发；passage 正文用 text 函数按 `s.player.location` 分支（在场=赴约文案，不在场=想起提醒）。
+- 剧情内战斗：choice 写 `fx:{combat:'编组id', goto:'战后段落'}`；**注意 goto 段落在「战胜」和「逃跑」后都会进**（引擎 returnPassage 机制），战后文案要写成两者都通（本模块的 qin_s1_3_p3 等都按此处理）。战败走全局死亡，无需处理。
+- 无作息 NPC（灰猫信任前）：全部节拍用 `when:['enter','action']` + `anyOf:[{loc:'sewer'},{loc:'dock'}]` 随机遭遇承载，间隔靠 `chance:0.6~0.7`；信任后 talk 入口自然接管。
+- 可重复玩法事件（mao_intel 情报购买）：story 型 + `cooldown:1440` + **priority 2**（低于剧情节拍的 5-8，高于 random 的 0）→ 剧情优先截胡、每天最多弹一次、不永久压住日常搭话。
+- **初遇 met 联动**：fx DSL 没有 met 字段，初遇段落的 p1 用 text 函数副作用 `s.npcs.{id}.met=true`（幂等；真实 UI 渲染正文必执行。纯引擎驱动且不渲染正文的场景不会置位——目前无此场景）。
+
+**对大纲的微调（已同步 NPC设定.md）**：qin 警惕段的旧案卷宗登记为「叛变旧部一案的案卷」（连接警惕/熟识两段，内容不当场揭示）；mao 信任段补登记越轨事件 `mao_s2_3`（不收子弹收「利息」，她主导亦可被拒绝，点到即止，完整成人内容仍留 M6 亲密段）。
+
+**已知限制 / 留给后续**：
+- `skill:melee`/`skill:bandage` 已按大纲发放，但 M1 引擎的战斗/道具结算目前不读这两个技能位（只有 packmule 有效果），战斗被动与包扎增益的数值落地留给 M9 平衡（建议：melee 提近战 dmg 或命中，bandage 提绷带类 fx）。
+- mao_intel 的情报正文是 6 条静态池随机（内容对应 M3 真实数据：周五进货/换岗间隔/地铁军械等），M8 世界事件池上线后可替换为动态情报。
+- 灰猫 s2_3 越轨的「下次加价」、qin 复仇线、lin 实验楼委托均为 M6 钩子，正文已埋口但未注册任何 M6 事件 id。
+- 开场发放的铁管让 M3 商店的低端武器略贬值，若 M9 平衡嫌开局太富可改成菜刀或删去。
 
 ### M4（2026-07-16, opus）
 产出：`js/data/npcs.js`（10 名 NPC 静态数据 + NPC 系统层）。已在 index.html 取消注释引入 npcs.js、并按 M2 约定删除 `_demo.js` 的 `<script>` 引入（`_demo.js` 文件本身保留）；在 `render.js` 底部导航新增一个「关系」入口（`{name:'npc'}`，指向好感面板）。Node 环境 47 项 + jsdom 全页面 18 项冒烟全绿（作息在场逐一核对、日常搭话分层与每日一次好感、送礼喜好/厌恶/普通三档且每日一次、好感达标不自动升阶+越级被拒、story 锁序不跳不重复、死亡入口关闭、好感 0→100 走线、存读档、关系面板 DOM 联动与送礼）。
