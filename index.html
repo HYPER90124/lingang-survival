@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#12100f">
+  <title>临港余生</title>
+  <!-- 样式（M2 实现，占位引入；文件不存在时浏览器忽略即可） -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- 全部界面由 UI 层渲染进此容器（M2 实现） -->
+  <div id="app"></div>
+
+  <!--
+    引入顺序（见 docs/Schema.md）：css → engine → ui → data → main.js
+    data 与 ui 文件在 M2/M3 补齐后取消注释即可，顺序不要改动。
+    main.js 必须最后加载（等注册表填充完成后再启动）。
+  -->
+
+  <!-- 引擎层（M1） -->
+  <script src="js/engine/state.js"></script>
+  <script src="js/engine/time.js"></script>
+  <script src="js/engine/events.js"></script>
+  <script src="js/engine/combat.js"></script>
+  <script src="js/engine/save.js"></script>
+
+  <!-- UI 层（M2 补齐后取消注释） -->
+  <!--
+  <script src="js/ui/render.js"></script>
+  <script src="js/ui/panels.js"></script>
+  <script src="js/ui/tags.js"></script>
+  -->
+
+  <!-- 数据层（M3+ 补齐后取消注释；纯数据注册，可安全并行） -->
+  <!--
+  <script src="js/data/items.js"></script>
+  <script src="js/data/locations.js"></script>
+  <script src="js/data/npcs.js"></script>
+  <script src="js/data/trade.js"></script>
+  <script src="js/data/story/qin.js"></script>
+  <script src="js/data/story/lin.js"></script>
+  <script src="js/data/story/mao.js"></script>
+  <script src="js/data/story/secondary.js"></script>
+  <script src="js/data/story/minor.js"></script>
+  <script src="js/data/story/worldevents.js"></script>
+  -->
+
+  <!-- 启动（必须最后） -->
+  <script src="js/engine/main.js"></script>
+</body>
+</html>
