@@ -28,7 +28,7 @@
 | M5 | 主要 NPC 剧情·前中期 + 开场 | fable | ✅ 完成 |
 | M6 | 主要 NPC 剧情·亲密羁绊（成人内容） | fable | ✅ 完成 |
 | M7 | 次要 NPC ×4 全剧情 | fable | ✅ 完成 |
-| M8 | 边缘 NPC + 世界事件池 | fable | ⬜ 未开始 |
+| M8 | 边缘 NPC + 世界事件池 | fable | ✅ 完成 |
 | M9 | 整合、平衡、打包、部署 Pages | opus | ⬜ 未开始 |
 
 执行顺序：M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9。
@@ -36,6 +36,43 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M8（2026-07-16, fable）
+产出：`js/data/story/minor.js`（边缘三人 11 事件）+ `js/data/story/worldevents.js`（69 事件）。index.html 两文件均已引入（M0 目录清单全部落齐）。**全游戏事件总数 207，其中 M8 新增 80**。Node 冒烟 935 项 8 连跑全绿（全量引用扫描 268 处 goto、边缘三人全流程、15 地点逐一蹲池 ≥3 条、四类状态事件控制台调数值逐一触发、尸潮夜预警→日历→整夜遭遇→黎明退潮全链、雨天开雨→公园加成→定点雨停、屠夫帮变体按主线 flag 切换）。
+
+**边缘 NPC（minor.js）**：chen `s0_1→confess(每日一次,理智+12)→s0_2`；cai `s0_1(食物换搭话)→cai_talk(疯话池+cai_barter 入口)→s0_2(守船)`；fang `s0_1→s0_2(升1,肉干换8子弹)+fang_trade(可重复)→s1_1(升2,北桥真相)→fang_s2_3(可选成人,可拒绝)`。fang 真相与 qin_s2_4 为同一晚北桥两侧视角（已登记 NPC设定.md）。**教训一则：choice 的 fx 同时写 shop+goto 时引擎只走 shop、goto 会被丢弃**（routeNav 顺序 combat>shop>goto），once 事件里这么写会卡死后续——本模块已修掉一处，M9 整合若见此写法务必排查。
+
+**状态触发池（worldevents.js，任意地点）**：幻觉 halluc_1~5（sanity<20，pri 3，chance .12~.30 / cd 360~720，第 5 条为低概率正向记忆闪回）；醉酒 drunk_1~3（alcohol>60，pri 3，.20~.30 / 300~480）；毒瘾发作日 addict_attack_1（addiction>50，**scheduled 每日一次**，pri 7，三分支：镇静剂/止痛药=续期+瘾微涨，硬扛=瘾-4 理智精力大损）；感染濒死 infect_crit_1（infection>80，pri 9，cd 360 反复催命+每次硬撑 hp-5 形成限时压力；医院内分支：林晚好感≥40 免费救治 / 10 子弹急救，各-35 感染；军用急救包自救 -20）。注意 infect_crit 与 M6 lin_cure_1 同 pri 9，lin.js 注册在先，羁绊后在医院自动走专属剧情，两者不冲突。
+
+**全局周期链**：
+- 尸潮夜：horde_warn（晚间 tick，chance .08 / cd 8640，pri 5；文案按已识 NPC 走周响广播/灰猫纸条/敲锣三变体）→ 写 `world.hordeAlert` + **日历 appointment(eventId) 次日 20:30 强制触发 horde_night_start**（when:[] 不入常规池；开场写 `world.hordeNight` 并自动登记次日 05:00 horde_night_end 强制收尾）→ 夜间室外 11 地点 horde_enc_1(.5/120)/horde_enc_2(.35/180) pri 6 高频遭遇=「全图危险度上调」的实现载体，室内 home/bar/church 走 horde_safe_1 听潮 → 黎明清旗。链路全程数据层实现，无引擎改动。
+- 雨天：rain_start（上午 tick，.12 / cd 2880，pri 4）写 `world.rainDay` + 当日 20:00 rain_end（eventId 强制）；加成=rain_harvest_1（park，.5/240，pri 2，雨水+2 野菜+1）+ rain_amb_1（5 地点氛围，.2/240，pri 1）。
+- 屠夫帮世界线 butcher_world_1~4（pri 1，.10~.12 / cd 1440~2880）：收账队/码头运货/悬赏告示/内讧火并，text 函数读 `npc.qin.s4_1 / scoutDone / sawCargo`、`npc.mao.lostGoods`、qin/mao stage 出变体，**不写任何剧情 flag**。
+
+**各地点 M8 新增 chance/cooldown 配置表（M9 平衡用；M3 打底数值见 locations.js 尾部）**：
+| 地点 | 掠影 sv | 二波遭遇/氛围 | 罕见奇遇 rare（均 cd 4320） |
+|---|---|---|---|
+| home | .10/720 | 喂猫 .10/720 | .05 罐头×2+子弹6 |
+| residential | .12/600 | 夜奔袭 .22/300 | .05 罐头2+水2+绷带（有留一半良心分支） |
+| market | .10/720(昼) | 爬行者 .10/480 | .05 整箱货：昧下 or 还赵铁 aff+6 |
+| hospital | .12/600 | 夜床底 .18/360 | .04 夹墙药（抗生素+镇静剂+绷带2） |
+| police | .10/720 | 夜羁押区 .20/360 | .05 保险柜（子弹12+猎刀） |
+| bar | .12/600(晚) | 停电 .10/720 | .05 陈酿（需识苏曼） |
+| campus | .12/600 | 犬群 .15/360 | .05 电池+茶2+读书理智+6 |
+| metro | .12/720 | 浮肿者 .18/360 | .04 军囊（子弹15+军急救包） |
+| park | .12/720(昼) | 野菜道 .15/480(昼) | .05 救生箱 |
+| gas | .10/720 | 偷油贼 .12/600 | .05 零件2+汽油 |
+| mall | .10/720 | 巡逻队 .15/480 | .05 户外柜（绳+手电+肉干2） |
+| church | .10/720 | 唱诗 .12/600(昼) | .05 救济箱 |
+| dock | .10/720 | 夜合围 .20/360 | .04 走私夹层（酒+巧克力2+子弹6） |
+| checkpoint | .10/720 | 犬群恋食 .15/360 | .04 补给桶（军急救+肉干+子弹10） |
+| sewer | .12/720 | 水闸浮肿 .15/360 | .05 无主藏点（需手电） |
+
+**已知限制 / 留给 M9**：
+- 尸潮夜的「危险度上调」只作用于事件层（高频遭遇池），不改 locations.js 的 danger 字段与搜刮表；雨天加成同理只在 park 事件层。若 M9 想要系统级修正，需要引擎读 world.hordeNight/rainDay。
+- horde_night_start/end、rain_end 依赖 appointment 的 eventId 强制触发（tick/enter 才结算）：玩家整夜睡觉时会在睡眠 advance 的整点 tick 里正常结算，无遗漏；但若 M9 改动 dueAppointments 逻辑，这三处链路要回归。
+- infect_crit 的「免费救治」分支只查 `aff.lin≥40`，未查林晚作息（急诊设定）；lin 02:00–06:00 睡眠时段照样能救，视为合理特例。
+- rare_ 事件单次收益较肥（军囊/保险柜/补给桶），cd 4320 + chance ≤.05 控频；M9 若嫌通胀可统一砍 chance 一半。
 
 ### M7（2026-07-16, fable）
 产出：`js/data/story/secondary.js`（苏曼 9 事件 / 阿豆 7 / 周响 9 / 赵铁 8，各线警惕→羁绊全阶段 + 亲密成人一段·性别双分支·可拒绝）。index.html 已取消 secondary.js 注释（minor/worldevents 仍留给 M8）。Node 冒烟 765 项 5 连跑全绿（全量引用扫描 238 处 goto、四线全流程驱动到羁绊、供药/劝戒×帮扛/放任四象限、保护费三立场、成人段落双性别渲染、机制逐项实测）。
