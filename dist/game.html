@@ -300,7 +300,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .combat-log .line.turn-sep { color: var(--fg-dim); font-size: 12px; margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 6px; }
 .combat-weapon { padding: 0 16px 8px; font-size: 12px; color: var(--fg-dim); }
 .combat-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px 16px calc(14px + var(--sab)); }
-.combat-actions .btn { text-align: center; }
+.combat-actions .btn { text-align: center; font-size: 13px; line-height: 1.25; padding: 8px 4px; }
+.enc-tag { color: var(--fg-dim); font-size: .88em; }
 
 /* ---- 商店界面 ------------------------------------------------------------------ */
 .shop-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -1135,17 +1136,26 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.data.enemies = G.data.enemies || {};
   G.data.encounters = G.data.encounters || {};
 
-  // ---- 可调常量（M9） -----------------------------------------------------
+  // ---- 可调常量（M9 建立 / M10 调整） -------------------------------------
   var C = {
     fistDmg: [2, 5],
     heavyMult: 1.6,
     heavyEnergy: 10,
     hitNormal: 0.9,
-    hitHeavy: 0.62,
+    hitHeavy: 0.70,          // M10：0.62→0.70，让重击期望伤害不再低于普攻
     defendReduce: 0.4,       // 防御时受到伤害 ×0.4（减伤 60%）
+    defendEnergyRegen: 4,    // M10：防御回合小幅回精力，支撑「防御→重击」循环
     enemyHit: 0.75,
     infectMin: 10, infectMax: 25,
-    fleeBase: 0.5
+    fleeBase: 0.5,
+    // M10 技能落地
+    meleeHitBonus: 0.05,     // skill:melee 近战命中 +0.05
+    meleeDmgBonus: 2,        // skill:melee 近战伤害 +2
+    bandageMult: 1.5,        // skill:bandage 治疗类 fx ×1.5
+    moddingWearEvery: 2,     // skill:modding 每 N 次攻击才损耗 1 点耐久
+    // M10 连击奖励（可选爽感）
+    comboBonus: 1,           // 每段连击追加伤害
+    comboCap: 3              // 连击追加伤害上限
   };
   G.COMBAT_TUNE = C;
 
@@ -1176,9 +1186,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       infect: def.infect || 0,
       loot: def.loot || null,
       descPool: def.descPool || [],
+      human: !!def.human,
       alive: true
     };
   }
+
+  // 命中/被咬文案里的名字标签：丧尸包 [zed]，人类（屠夫帮）用原名不套 [zed]
+  function foeName(e) { return e.human ? e.name : '[zed]' + e.name + '[/zed]'; }
 
   function startCombat(encounterId, opts) {
     opts = opts || {};
@@ -1211,9 +1225,24 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     return { dmg: def.dmg || C.fistDmg, hitPool: def.hitPool || null, fists: false, def: def, ref: w };
   }
 
+  // ---- 技能查询 -----------------------------------------------------------
+  function hasSkill(name) { var p = S().player; return !!(p && p.skills && p.skills[name]); }
+  // melee 只对近战武器/徒手生效（枪械 def.ranged 排除）
+  function meleeActive(w) {
+    if (!hasSkill('melee')) return false;
+    if (w.fists) return true;
+    return !(w.def && w.def.ranged);
+  }
+
   function wearWeapon() {
     var w = S().player.weapon;
     if (!w) return;
+    // skill:modding —— 每两次攻击才损耗 1 点耐久（损耗减半）
+    if (hasSkill('modding')) {
+      var cs = S().combat;
+      cs._wearTick = (cs._wearTick || 0) + 1;
+      if (cs._wearTick % C.moddingWearEvery !== 0) return;
+    }
     w.durability -= 1;
     if (w.durability <= 0) {
       var def = G.engine.itemDef(w.id);
@@ -1235,53 +1264,106 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var target = firstAlive();
     if (!target) return;
     var w = weaponInfo();
-    var hitChance = heavy ? C.hitHeavy : C.hitNormal;
+    var melee = meleeActive(w);
+    var hitChance = (heavy ? C.hitHeavy : C.hitNormal) + (melee ? C.meleeHitBonus : 0);
+    hitChance = G.engine.clamp(hitChance, 0, 1);
     if (heavy) G.engine.statAdd('energy', -C.heavyEnergy);
 
     if (Math.random() > hitChance) {
+      combat.combo = 0;                                   // 落空则连击中断
       log.push('你' + (heavy ? '奋力挥出重击但落了空' : '的攻击被躲开了') + '。');
     } else {
-      var base = rand(w.dmg[0], w.dmg[1]);
-      var dmg = Math.round(heavy ? base * C.heavyMult : base);
+      var base = rand(w.dmg[0], w.dmg[1]) + (melee ? C.meleeDmgBonus : 0);
+      var combo = combat.combo = (combat.combo || 0) + 1;
+      var comboAdd = Math.min((combo - 1) * C.comboBonus, C.comboCap);
+      var dmg = Math.round(heavy ? base * C.heavyMult : base) + comboAdd;
       target.hp -= dmg;
       var phrase = w.hitPool ? pick(w.hitPool) : (w.fists ? '拳头砸中' : '击中');
-      log.push('你' + phrase + '[zed]' + target.name + '[/zed]，造成 ' + dmg + ' 点伤害。');
-      if (target.hp <= 0) { target.alive = false; log.push('[zed]' + target.name + '[/zed]倒下不再动弹。'); }
+      log.push('你' + phrase + foeName(target) + '，造成 ' + dmg + ' 点伤害' +
+        (comboAdd > 0 ? '（连击 +' + comboAdd + '）' : '') + '。');
+      if (target.hp <= 0) { target.alive = false; log.push(foeName(target) + '倒下不再动弹。'); }
     }
     if (!w.fists) wearWeapon();
   }
+
+  // skill:bandage —— med 类道具的治疗类 fx（hp 增益 / 感染削减）×bandageMult。
+  // 返回可直接交给 applyFx 的 fx（无技能或非治疗类时原样返回 def.fx）。
+  function medBoostFx(def) {
+    if (!def || !def.fx) return def && def.fx;
+    if (def.type !== 'med' || !hasSkill('bandage') || !def.fx.stat) return def.fx;
+    var fx = def.fx, clone = {};
+    for (var k in fx) clone[k] = fx[k];
+    clone.stat = {};
+    for (var st in fx.stat) {
+      var v = fx.stat[st];
+      if ((st === 'hp' && v > 0) || (st === 'infection' && v < 0)) v = Math.round(v * C.bandageMult);
+      clone.stat[st] = v;
+    }
+    return clone;
+  }
+  G.engine.medBoostFx = medBoostFx;
 
   function useItemInCombat(itemId) {
     var log = S().combat.log;
     if (!itemId || !G.engine.hasItem(itemId)) { log.push('你没有可用的东西。'); return; }
     var def = G.engine.itemDef(itemId);
-    G.engine.applyFx(def && def.fx);
+    G.engine.applyFx(medBoostFx(def));
     G.engine.removeItem(itemId, 1);
     log.push('你使用了[item]' + ((def && def.name) || itemId) + '[/item]。');
   }
 
-  function tryFlee() {
-    var combat = S().combat, log = combat.log;
+  // 逃跑成功率（tryFlee 与 combatOptionInfo 共用同一公式，防两处漂移）
+  function fleeChance() {
+    var combat = S().combat;
     var energy = S().player.stats.energy;
-    var maxSpeed = Math.max.apply(null, combat.enemies.filter(function (e) { return e.alive; }).map(function (e) { return e.speed; }));
+    var alive = combat.enemies.filter(function (e) { return e.alive; });
+    var maxSpeed = alive.length ? Math.max.apply(null, alive.map(function (e) { return e.speed; })) : 1;
     var chance = C.fleeBase + (energy - 50) / 100 - maxSpeed * 0.1;
     if (G.engine.isOverweight()) chance -= 0.4;                 // 超重难以脱身
-    chance = G.engine.clamp(chance, 0.05, 0.95);
+    return G.engine.clamp(chance, 0.05, 0.95);
+  }
+
+  function tryFlee() {
+    var log = S().combat.log;
+    var chance = fleeChance();
     G.engine.statAdd('energy', -5);
     if (Math.random() < chance) { log.push('你抓住空档拔腿就跑，甩开了它们。'); return true; }
     log.push('你想逃，却被拦了下来。');
     return false;
   }
 
+  // ---- 选项实时数据（供 UI 在按钮上显示成功率/后果） -----------------------
+  function playerHitInfo(heavy) {
+    var w = weaponInfo();
+    var h = (heavy ? C.hitHeavy : C.hitNormal) + (meleeActive(w) ? C.meleeHitBonus : 0);
+    return G.engine.clamp(h, 0, 1);
+  }
+  function playerDmgRange(heavy) {
+    var w = weaponInfo(), bonus = meleeActive(w) ? C.meleeDmgBonus : 0;
+    var lo = w.dmg[0] + bonus, hi = w.dmg[1] + bonus;
+    if (heavy) { lo = Math.round(lo * C.heavyMult); hi = Math.round(hi * C.heavyMult); }
+    return [lo, hi];
+  }
+  function combatOptionInfo() {
+    if (!inCombat()) return null;
+    return {
+      attack: { hit: playerHitInfo(false), dmg: playerDmgRange(false) },
+      heavy:  { hit: playerHitInfo(true), dmg: playerDmgRange(true), energy: C.heavyEnergy },
+      defend: { reduce: 1 - C.defendReduce, energy: C.defendEnergyRegen },
+      flee:   { chance: fleeChance() }
+    };
+  }
+  G.engine.combatOptionInfo = combatOptionInfo;
+
   function enemyTurn() {
     var combat = S().combat, log = combat.log;
     combat.enemies.forEach(function (e) {
       if (!e.alive) return;
-      if (Math.random() > C.enemyHit) { log.push('[zed]' + e.name + '[/zed]扑空。'); return; }
+      if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
       G.engine.statAdd('hp', -dmg);
-      var desc = e.descPool.length ? pick(e.descPool) : '[zed]' + e.name + '[/zed]咬了上来';
+      var desc = e.descPool.length ? pick(e.descPool) : foeName(e) + '咬了上来';
       log.push(desc + '，你受到 ' + dmg + ' 点伤害。');
       // 感染判定
       if (e.infect && Math.random() < e.infect) {
@@ -1351,9 +1433,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     switch (action) {
       case 'attack': playerAttack(false); break;
       case 'heavy':  playerAttack(true); break;
-      case 'defend': combat.log.push('你举起手臂/武器格挡，准备承受下一击。'); break;
-      case 'item':   useItemInCombat(param); break;
-      case 'flee':   fled = tryFlee(); break;
+      case 'defend':
+        combat.combo = 0;
+        G.engine.statAdd('energy', C.defendEnergyRegen);       // M10：防御小幅回精力
+        combat.log.push('你举起手臂/武器格挡，准备承受下一击，趁隙喘了口气。');
+        break;
+      case 'item':   combat.combo = 0; useItemInCombat(param); break;
+      case 'flee':   combat.combo = 0; fled = tryFlee(); break;
       default: combat.log.push('（无效动作）');
     }
 
@@ -1894,6 +1980,20 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   }
   G.ui.showLocation = showLocation;
 
+  // 把编组 id / 敌人 id / 敌人 id 数组解析成「跛行者×2、奔跑者」这样的构成串
+  function encounterComposition(encId) {
+    var enc = G.data.encounters || {}, ene = G.data.enemies || {};
+    var ids = Array.isArray(encId) ? encId : (enc[encId] || [encId]);
+    var order = [], counts = {};
+    ids.forEach(function (id) {
+      var def = ene[id];
+      var nm = (def && def.name) || id;
+      if (counts[nm] == null) { counts[nm] = 0; order.push(nm); }
+      counts[nm]++;
+    });
+    return order.map(function (nm) { return counts[nm] > 1 ? nm + '×' + counts[nm] : nm; }).join('、');
+  }
+
   // ---- passage 渲染 -------------------------------------------------------
   function showPassage(id) {
     navSeq++;
@@ -1910,7 +2010,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (choices.length) {
       choices.forEach(function (c) {
         var btn = h('button', { class: 'btn', onclick: function () { G.engine.selectChoice(c); } });
-        btn.innerHTML = G.ui.tags.parse(c.label || '');
+        var html = G.ui.tags.parse(c.label || '');
+        // M10 系统级保险：选项若触发战斗，自动后缀敌方构成，防剧情文本数量写错误导玩家
+        if (c.fx && c.fx.combat) {
+          var comp = encounterComposition(c.fx.combat);
+          if (comp) html += ' <span class="enc-tag">（' + comp + '）</span>';
+        }
+        btn.innerHTML = html;
         list.appendChild(btn);
       });
     } else {
@@ -1970,11 +2076,22 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     function actBtn(label, action) {
       return h('button', { class: 'btn', text: label, onclick: function () { runCombatAction(action); } });
     }
-    actions.appendChild(actBtn('攻击', 'attack'));
-    actions.appendChild(actBtn('重击', 'heavy'));
-    actions.appendChild(actBtn('防御', 'defend'));
+    // M10：把实时成功率/伤害/后果渲染到按钮上
+    var info = G.engine.combatOptionInfo ? G.engine.combatOptionInfo() : null;
+    function pct(x) { return Math.round(x * 100) + '%'; }
+    function dmgTxt(r) { return r[0] === r[1] ? r[0] + '伤' : r[0] + '-' + r[1] + '伤'; }
+    var atkLabel = '攻击', heavyLabel = '重击', defLabel = '防御', fleeLabel = '逃跑';
+    if (info) {
+      atkLabel = '攻击（' + pct(info.attack.hit) + '·' + dmgTxt(info.attack.dmg) + '）';
+      heavyLabel = '重击（' + pct(info.heavy.hit) + '·' + dmgTxt(info.heavy.dmg) + '·-' + info.heavy.energy + '精力）';
+      defLabel = '防御（-' + Math.round(info.defend.reduce * 100) + '%伤·+' + info.defend.energy + '精力）';
+      fleeLabel = '逃跑（' + pct(info.flee.chance) + '）';
+    }
+    actions.appendChild(actBtn(atkLabel, 'attack'));
+    actions.appendChild(actBtn(heavyLabel, 'heavy'));
+    actions.appendChild(actBtn(defLabel, 'defend'));
     actions.appendChild(h('button', { class: 'btn', text: '用道具', onclick: openCombatItemPicker }));
-    actions.appendChild(actBtn('逃跑', 'flee'));
+    actions.appendChild(actBtn(fleeLabel, 'flee'));
     screen.appendChild(actions);
 
     el.appendChild(screen);
@@ -2787,17 +2904,17 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       hitPool: ['反手一刀捅进', '挥猎刀划开', '侧身一刀削中', '顺势一刀扎向']
     },
     pistol: {
-      name: '手枪', type: 'weapon', desc: '一把制式手枪，弹匣还剩不少。',
+      name: '手枪', type: 'weapon', ranged: true, desc: '一把制式手枪，弹匣还剩不少。',
       dmg: [10, 18], durMax: 12, price: 80, weight: 2,
       hitPool: ['举枪射穿', '近距离一枪打中', '侧身一枪命中', '连开一枪击中']
     },
     revolver: {
-      name: '左轮', type: 'weapon', desc: '老式左轮，后坐力大，六发弹巢。',
+      name: '左轮', type: 'weapon', ranged: true, desc: '老式左轮，后坐力大，六发弹巢。',
       dmg: [14, 22], durMax: 6, price: 100, weight: 2,
       hitPool: ['举左轮轰在', '近距离一枪打穿', '侧身一枪击中', '扣动扳机命中']
     },
     shotgun: {
-      name: '猎枪', type: 'weapon', desc: '双管猎枪，近距离威力惊人，装弹不多。',
+      name: '猎枪', type: 'weapon', ranged: true, desc: '双管猎枪，近距离威力惊人，装弹不多。',
       dmg: [18, 30], durMax: 5, price: 150, weight: 4,
       hitPool: ['近距离一枪轰烂', '扣扳机轰在', '侧身一枪扫中', '抵近一枪炸开']
     },
@@ -2941,7 +3058,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (def.type === 'weapon' || def.type === 'key' || def.type === 'misc') {
       return { ok: false, msg: '[item]' + def.name + '[/item]没法直接使用。' };
     }
-    G.engine.applyFx(def.fx || {});
+    // skill:bandage 治疗类增益（引擎 medBoostFx 无技能时原样返回 def.fx）
+    var fx = (G.engine.medBoostFx ? G.engine.medBoostFx(def) : def.fx) || {};
+    G.engine.applyFx(fx);
     G.engine.removeItem(id, 1);
     return { ok: true, msg: '你用掉了[item]' + def.name + '[/item]。' };
   }
@@ -2982,10 +3101,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
  * 注册 G.data.enemies（结构见 docs/Schema.md「战斗」节）与 G.data.encounters
  * （编组，供 G.engine.startCombat(encounterId) 使用）。纯数据，combat.js 消费。
  *
- * 已知引擎限制（记录供 M9 参考）：combat.js 的 playerAttack 命中文案会统一把
- * 目标名包在 [zed] 标签里（无论敌人是丧尸还是人类），本层无法从数据侧修正；
- * 因此本文件的 descPool（敌方攻击你时的文案，由数据层拼装）对人类敌人（屠夫帮）
- * 不再套 [zed]，避免标签语义用错。
+ * [zed] 标签：人类敌人（屠夫帮）标记 human:true，combat.js 的 foeName() 会据此
+ * 对人类不套 [zed]（M10 修复了旧的「命中文案统一套 [zed]」问题）。descPool 对
+ * 人类敌人本就不套 [zed]，两侧一致。
  * ========================================================================== */
 (function () {
   'use strict';
@@ -3056,7 +3174,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       ]
     },
     thug_grunt: {
-      name: '屠夫帮杂兵', hp: 35, dmg: [7, 15], speed: 3, infect: 0,
+      name: '屠夫帮杂兵', human: true, hp: 35, dmg: [7, 15], speed: 3, infect: 0,
       loot: {
         bullets: { chance: 0.6, min: 2, max: 6 },
         drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }]
@@ -3069,7 +3187,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       ]
     },
     thug_brute: {
-      name: '屠夫帮打手', hp: 60, dmg: [10, 20], speed: 2, infect: 0,
+      name: '屠夫帮打手', human: true, hp: 60, dmg: [10, 20], speed: 2, infect: 0,
       loot: {
         bullets: { chance: 0.7, min: 4, max: 10 },
         drops: [
@@ -3553,7 +3671,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   event('amb_market_1', 'market', { cond: { chance: 0.1 }, cooldown: 300 }, 'amb_market_1_p');
 
-  passage('enc_market_1_p', '打烊后的货架间，一只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
+  passage('enc_market_1_p', '打烊后的货架间，两只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
     { label: '动手解决', fx: { combat: 'zombie_pair' } },
     { label: '退到门口', fx: { stat: { energy: -3 } } }
   ]);
@@ -3565,7 +3683,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   event('amb_hospital_1', 'hospital', { cond: { chance: 0.12 }, cooldown: 300 }, 'amb_hospital_1_p');
 
-  passage('enc_hospital_1_p', '太平间的门没关严，一具裹着白布的东西突然坐了起来。', [
+  passage('enc_hospital_1_p', '太平间的门没关严，裹着白布的几具东西先后从停尸台上坐了起来——三具，朝着门口的你。', [
     { label: '立刻应战', fx: { combat: 'zombie_trio' } },
     { label: '转身就跑', fx: { stat: { energy: -5, sanity: -3 } } }
   ]);
@@ -3634,7 +3752,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   event('amb_park_1', 'park', { cond: { chance: 0.15 }, cooldown: 300 }, 'amb_park_1_p');
 
-  passage('enc_park_1_p', '夜里的芦苇丛突然响动，一只犬尸窜了出来。', [
+  passage('enc_park_1_p', '夜里的芦苇丛突然响动，一群犬尸前后窜了出来，三条压低了身子朝你逼近。', [
     { label: '挥器迎战', fx: { combat: 'dog_pack' } },
     { label: '沿岸狂奔', fx: { stat: { energy: -6 } } }
   ]);
@@ -3686,7 +3804,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   event('amb_dock_1', 'dock', { cond: { chance: 0.12 }, cooldown: 300 }, 'amb_dock_1_p');
 
-  passage('enc_dock_1_p', '集装箱后传来金属刮擦的声音，一只爬行者贴着地面窜了出来。', [
+  passage('enc_dock_1_p', '集装箱后传来金属刮擦的声音，两只爬行者贴着地面窜了出来。', [
     { label: '一脚踩住解决', fx: { combat: 'crawler_ambush' } },
     { label: '跳上集装箱躲开', fx: { stat: { energy: -5 } } }
   ]);
@@ -7747,7 +7865,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('sv_residential_1', { loc: 'residential', chance: 0.12 }, 600, 'sv_residential_1_p');
 
-  P('enc_residential_2_p', '夜色里一条黑影贴着墙根窜过去，速度快得不像死人——可它转过头来的时候，半张脸都没有了。', [
+  P('enc_residential_2_p', '夜色里两条黑影贴着墙根窜过来，速度快得不像死人——它们转过头来的时候，半张脸都没有了。', [
     { label: '迎上去解决', fx: { combat: 'runner_pack' } },
     { label: '躲进单元门洞', fx: { stat: { energy: -5, sanity: -2 } } }
   ]);
@@ -7765,7 +7883,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('sv_market_1', { loc: 'market', timeRange: [480, 1200], chance: 0.1 }, 720, 'sv_market_1_p');
 
-  P('enc_market_2_p', '卸货口的胶帘无风自动，帘子底下爬出一只贴地的东西，指甲在水泥地上刮出白痕。', [
+  P('enc_market_2_p', '卸货口的胶帘无风自动，帘子底下爬出两只贴地的东西，指甲在水泥地上刮出白痕。', [
     { label: '趁它起身前解决', fx: { combat: 'crawler_ambush' } },
     { label: '退回亮处', fx: { stat: { energy: -4 } } }
   ]);
@@ -7784,7 +7902,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('sv_hospital_1', { loc: 'hospital', chance: 0.12 }, 600, 'sv_hospital_1_p');
 
-  P('enc_hospital_2_p', '住院部楼道里晾着的床单轻轻摆动，最里侧那床底下，伸出一只灰白的手抓住了你的鞋帮。', [
+  P('enc_hospital_2_p', '住院部楼道里晾着的床单轻轻摆动，最里侧那两张床底下，各探出一只灰白的手，前一只抓住了你的鞋帮。', [
     { label: '甩开它，就地解决', fx: { combat: 'crawler_ambush' } },
     { label: '踹脱后撤出楼道', fx: { stat: { energy: -5, sanity: -3 }, time: 10 } }
   ]);
@@ -7905,7 +8023,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('sv_mall_1', { loc: 'mall', chance: 0.1 }, 720, 'sv_mall_1_p');
 
-  P('enc_mall_2_p', '楼上传来齐整的脚步声——四五个缠红布条的人排成横排压过来，手电光柱来回扫：“搜仔细点，孟爷说了，踩点的就在这几天来过。”', [
+  P('enc_mall_2_p', '楼上传来齐整的脚步声——两个缠红布条的人一前一后压过来，手电光柱来回扫：“搜仔细点，孟爷说了，踩点的就在这几天来过。”', [
     { label: '趁他们没合围先动手', fx: { combat: 'thug_squad' } },
     { label: '从消防通道脱身', fx: { stat: { energy: -8 }, time: 15 } }
   ]);

@@ -67,17 +67,17 @@
       hitPool: ['反手一刀捅进', '挥猎刀划开', '侧身一刀削中', '顺势一刀扎向']
     },
     pistol: {
-      name: '手枪', type: 'weapon', desc: '一把制式手枪，弹匣还剩不少。',
+      name: '手枪', type: 'weapon', ranged: true, desc: '一把制式手枪，弹匣还剩不少。',
       dmg: [10, 18], durMax: 12, price: 80, weight: 2,
       hitPool: ['举枪射穿', '近距离一枪打中', '侧身一枪命中', '连开一枪击中']
     },
     revolver: {
-      name: '左轮', type: 'weapon', desc: '老式左轮，后坐力大，六发弹巢。',
+      name: '左轮', type: 'weapon', ranged: true, desc: '老式左轮，后坐力大，六发弹巢。',
       dmg: [14, 22], durMax: 6, price: 100, weight: 2,
       hitPool: ['举左轮轰在', '近距离一枪打穿', '侧身一枪击中', '扣动扳机命中']
     },
     shotgun: {
-      name: '猎枪', type: 'weapon', desc: '双管猎枪，近距离威力惊人，装弹不多。',
+      name: '猎枪', type: 'weapon', ranged: true, desc: '双管猎枪，近距离威力惊人，装弹不多。',
       dmg: [18, 30], durMax: 5, price: 150, weight: 4,
       hitPool: ['近距离一枪轰烂', '扣扳机轰在', '侧身一枪扫中', '抵近一枪炸开']
     },
@@ -221,7 +221,9 @@
     if (def.type === 'weapon' || def.type === 'key' || def.type === 'misc') {
       return { ok: false, msg: '[item]' + def.name + '[/item]没法直接使用。' };
     }
-    G.engine.applyFx(def.fx || {});
+    // skill:bandage 治疗类增益（引擎 medBoostFx 无技能时原样返回 def.fx）
+    var fx = (G.engine.medBoostFx ? G.engine.medBoostFx(def) : def.fx) || {};
+    G.engine.applyFx(fx);
     G.engine.removeItem(id, 1);
     return { ok: true, msg: '你用掉了[item]' + def.name + '[/item]。' };
   }

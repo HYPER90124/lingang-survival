@@ -59,7 +59,7 @@
   ]);
   ev('sv_residential_1', { loc: 'residential', chance: 0.12 }, 600, 'sv_residential_1_p');
 
-  P('enc_residential_2_p', '夜色里一条黑影贴着墙根窜过去，速度快得不像死人——可它转过头来的时候，半张脸都没有了。', [
+  P('enc_residential_2_p', '夜色里两条黑影贴着墙根窜过来，速度快得不像死人——它们转过头来的时候，半张脸都没有了。', [
     { label: '迎上去解决', fx: { combat: 'runner_pack' } },
     { label: '躲进单元门洞', fx: { stat: { energy: -5, sanity: -2 } } }
   ]);
@@ -77,7 +77,7 @@
   ]);
   ev('sv_market_1', { loc: 'market', timeRange: [480, 1200], chance: 0.1 }, 720, 'sv_market_1_p');
 
-  P('enc_market_2_p', '卸货口的胶帘无风自动，帘子底下爬出一只贴地的东西，指甲在水泥地上刮出白痕。', [
+  P('enc_market_2_p', '卸货口的胶帘无风自动，帘子底下爬出两只贴地的东西，指甲在水泥地上刮出白痕。', [
     { label: '趁它起身前解决', fx: { combat: 'crawler_ambush' } },
     { label: '退回亮处', fx: { stat: { energy: -4 } } }
   ]);
@@ -96,7 +96,7 @@
   ]);
   ev('sv_hospital_1', { loc: 'hospital', chance: 0.12 }, 600, 'sv_hospital_1_p');
 
-  P('enc_hospital_2_p', '住院部楼道里晾着的床单轻轻摆动，最里侧那床底下，伸出一只灰白的手抓住了你的鞋帮。', [
+  P('enc_hospital_2_p', '住院部楼道里晾着的床单轻轻摆动，最里侧那两张床底下，各探出一只灰白的手，前一只抓住了你的鞋帮。', [
     { label: '甩开它，就地解决', fx: { combat: 'crawler_ambush' } },
     { label: '踹脱后撤出楼道', fx: { stat: { energy: -5, sanity: -3 }, time: 10 } }
   ]);
@@ -217,7 +217,7 @@
   ]);
   ev('sv_mall_1', { loc: 'mall', chance: 0.1 }, 720, 'sv_mall_1_p');
 
-  P('enc_mall_2_p', '楼上传来齐整的脚步声——四五个缠红布条的人排成横排压过来，手电光柱来回扫：“搜仔细点，孟爷说了，踩点的就在这几天来过。”', [
+  P('enc_mall_2_p', '楼上传来齐整的脚步声——两个缠红布条的人一前一后压过来，手电光柱来回扫：“搜仔细点，孟爷说了，踩点的就在这几天来过。”', [
     { label: '趁他们没合围先动手', fx: { combat: 'thug_squad' } },
     { label: '从消防通道脱身', fx: { stat: { energy: -8 }, time: 15 } }
   ]);

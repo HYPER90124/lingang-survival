@@ -292,7 +292,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .combat-log .line.turn-sep { color: var(--fg-dim); font-size: 12px; margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 6px; }
 .combat-weapon { padding: 0 16px 8px; font-size: 12px; color: var(--fg-dim); }
 .combat-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px 16px calc(14px + var(--sab)); }
-.combat-actions .btn { text-align: center; }
+.combat-actions .btn { text-align: center; font-size: 13px; line-height: 1.25; padding: 8px 4px; }
+.enc-tag { color: var(--fg-dim); font-size: .88em; }
 
 /* ---- 商店界面 ------------------------------------------------------------------ */
 .shop-tabs { display: flex; gap: 8px; margin-bottom: 10px; }

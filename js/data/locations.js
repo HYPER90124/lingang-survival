@@ -444,7 +444,7 @@
   ]);
   event('amb_market_1', 'market', { cond: { chance: 0.1 }, cooldown: 300 }, 'amb_market_1_p');
 
-  passage('enc_market_1_p', '打烊后的货架间，一只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
+  passage('enc_market_1_p', '打烊后的货架间，两只跛行者撞倒了空罐头堆，踉跄着朝你转过身。', [
     { label: '动手解决', fx: { combat: 'zombie_pair' } },
     { label: '退到门口', fx: { stat: { energy: -3 } } }
   ]);
@@ -456,7 +456,7 @@
   ]);
   event('amb_hospital_1', 'hospital', { cond: { chance: 0.12 }, cooldown: 300 }, 'amb_hospital_1_p');
 
-  passage('enc_hospital_1_p', '太平间的门没关严，一具裹着白布的东西突然坐了起来。', [
+  passage('enc_hospital_1_p', '太平间的门没关严，裹着白布的几具东西先后从停尸台上坐了起来——三具，朝着门口的你。', [
     { label: '立刻应战', fx: { combat: 'zombie_trio' } },
     { label: '转身就跑', fx: { stat: { energy: -5, sanity: -3 } } }
   ]);
@@ -525,7 +525,7 @@
   ]);
   event('amb_park_1', 'park', { cond: { chance: 0.15 }, cooldown: 300 }, 'amb_park_1_p');
 
-  passage('enc_park_1_p', '夜里的芦苇丛突然响动，一只犬尸窜了出来。', [
+  passage('enc_park_1_p', '夜里的芦苇丛突然响动，一群犬尸前后窜了出来，三条压低了身子朝你逼近。', [
     { label: '挥器迎战', fx: { combat: 'dog_pack' } },
     { label: '沿岸狂奔', fx: { stat: { energy: -6 } } }
   ]);
@@ -577,7 +577,7 @@
   ]);
   event('amb_dock_1', 'dock', { cond: { chance: 0.12 }, cooldown: 300 }, 'amb_dock_1_p');
 
-  passage('enc_dock_1_p', '集装箱后传来金属刮擦的声音，一只爬行者贴着地面窜了出来。', [
+  passage('enc_dock_1_p', '集装箱后传来金属刮擦的声音，两只爬行者贴着地面窜了出来。', [
     { label: '一脚踩住解决', fx: { combat: 'crawler_ambush' } },
     { label: '跳上集装箱躲开', fx: { stat: { energy: -5 } } }
   ]);

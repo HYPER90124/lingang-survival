@@ -4,10 +4,9 @@
  * 注册 G.data.enemies（结构见 docs/Schema.md「战斗」节）与 G.data.encounters
  * （编组，供 G.engine.startCombat(encounterId) 使用）。纯数据，combat.js 消费。
  *
- * 已知引擎限制（记录供 M9 参考）：combat.js 的 playerAttack 命中文案会统一把
- * 目标名包在 [zed] 标签里（无论敌人是丧尸还是人类），本层无法从数据侧修正；
- * 因此本文件的 descPool（敌方攻击你时的文案，由数据层拼装）对人类敌人（屠夫帮）
- * 不再套 [zed]，避免标签语义用错。
+ * [zed] 标签：人类敌人（屠夫帮）标记 human:true，combat.js 的 foeName() 会据此
+ * 对人类不套 [zed]（M10 修复了旧的「命中文案统一套 [zed]」问题）。descPool 对
+ * 人类敌人本就不套 [zed]，两侧一致。
  * ========================================================================== */
 (function () {
   'use strict';
@@ -78,7 +77,7 @@
       ]
     },
     thug_grunt: {
-      name: '屠夫帮杂兵', hp: 35, dmg: [7, 15], speed: 3, infect: 0,
+      name: '屠夫帮杂兵', human: true, hp: 35, dmg: [7, 15], speed: 3, infect: 0,
       loot: {
         bullets: { chance: 0.6, min: 2, max: 6 },
         drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }]
@@ -91,7 +90,7 @@
       ]
     },
     thug_brute: {
-      name: '屠夫帮打手', hp: 60, dmg: [10, 20], speed: 2, infect: 0,
+      name: '屠夫帮打手', human: true, hp: 60, dmg: [10, 20], speed: 2, infect: 0,
       loot: {
         bullets: { chance: 0.7, min: 4, max: 10 },
         drops: [

@@ -30,10 +30,10 @@
 | M7 | 次要 NPC ×4 全剧情 | fable | ✅ 完成 |
 | M8 | 边缘 NPC + 世界事件池 | fable | ✅ 完成 |
 | M9 | 整合、平衡、打包、部署 Pages | opus | ✅ 完成（v1.0） |
-| M10 | 战斗体验重做（选项成功率/后果显示、遇敌数量文本、主角强化） | opus | ⬜ 待开工 |
+| M10 | 战斗体验重做（选项成功率/后果显示、遇敌数量文本、主角强化） | opus | ✅ 完成 |
 | M11 | 地图地理重排 + 江水/雨水/煮水系统 | sonnet | ⬜ 待开工 |
 | M12 | 全库文本逻辑自查（首次/重复口径等） | fable | ⬜ 待开工 |
-| M13 | DoL 模式增强（战败非死亡/打工/魅力脱身/NPC邀约） | fable | ⬜ 已拍板，待开工 |
+| M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ⬜ 待开工 |
 | M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ⬜ 已拍板，待开工 |
 | M15 | 入冬季节压力（温度/寒冷值/水源联动） | opus | ⬜ 已拍板，待开工 |
 | M16 | QoL 杂项（收音机/图鉴统计/多存档槽/清洁度） | opus | ⬜ 已拍板，待开工 |
@@ -52,11 +52,28 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 
 ## 交接备注（每模块完成后追加，最新在上）
 
+### M10（2026-07-17, opus）
+战斗体验重做完成。改动文件：`combat.js`（核心）、`items.js`（bandage 联动 + 枪械 ranged 标记）、`enemies.js`（human 标记 + 头注更新）、`render.js`（战斗按钮实时数据 + choice 遇敌构成后缀）、`css/style.css`（按钮字号 + `.enc-tag`）、`locations.js`/`worldevents.js`（文本数量修正）。`dist/game.html` 已 `node tools/build.js` 重打（491.3KB）。存档结构未动。
+
+**1. 选项透明化**：新增 `G.engine.combatOptionInfo()`（纯新增）返回 attack/heavy/defend/flee 实时数据；逃跑公式抽成共用 `fleeChance()`（tryFlee 与 info 同源，不漂移）。render.js 战斗按钮渲染成 `攻击（90%·4-9伤）`/`重击（70%·6-14伤·-10精力）`/`防御（-60%伤·+4精力）`/`逃跑（30%）`。敌方全员构成+余血本就由 enemy-row 卡片逐个显示（含重复项，即构成）。
+
+**2. 遇敌数量一致**：系统级保险——render.js 渲染 choice 时若 `fx.combat` 存在，用 `encounterComposition()` 解析编组自动后缀 `（跛行者×2）`，以后写错文本也不误导。**修掉的文本错例（改文本不改编组）**：locations.js `enc_market_1_p`（一只→两只跛行者）、`enc_hospital_1_p`（一具→三具）、`enc_park_1_p`（一只犬尸→三条）、`enc_dock_1_p`（一只→两只爬行者）；worldevents.js `enc_residential_2_p`（一条→两条黑影/runner_pack）、`enc_market_2_p`（一只→两只/crawler_ambush）、`enc_hospital_2_p`（一只手→两床各一手/crawler_ambush）、`enc_mall_2_p`（四五个→两个/thug_squad）。全库其余 `fx.combat`（剧情线）均为模糊表述（「里面的东西」「一队巡逻」「几条野狗」）或已与编组数量吻合（qin_s1_3_p2「三具尸体+竖三根手指」=zombie_trio），合格未改。
+
+**3. 主角强化 + 技能落地**（全部在 `COMBAT_TUNE`）：
+- `hitHeavy` 0.62→**0.70**（重击期望不再低于普攻）；防御回合 `defendEnergyRegen`=**+4 精力**（支撑防御→重击循环）；连击奖励 `comboBonus`=1/`comboCap`=3（连续命中每段 +1 伤，封顶 +3，落空/换动作清零）。
+- `skill:melee`（老秦线）：近战命中 +0.05、伤害 +2（`meleeHitBonus`/`meleeDmgBonus`）；**只对近战武器/徒手生效**——枪械新增 `ranged:true` 排除。
+- `skill:bandage`（林晚线）：新增 `G.engine.medBoostFx(def)`，med 类道具的 hp 增益 / 感染削减 ×1.5（`bandageMult`）；combat.js `useItemInCombat` 与 items.js `useItem` 两条使用路径都走它。
+- `skill:modding`（阿豆线）：`wearWeapon` 每 2 次攻击才 -1 耐久（`moddingWearEvery`，损耗减半；计数存战斗态 `_wearTick`，不入档）。
+
+**4. 顺手修**：敌人加 `human:true`（thug_grunt/thug_brute），combat.js 新增 `foeName(e)`——人类不套 `[zed]`，命中/被咬/倒地文案统一走它。旧的「命中文案硬套 [zed]」已消除。
+
+**测试（vm 沙箱载全引擎+数据，无 UI；scratchpad 未入库）**：combatOptionInfo 形状/数值、三技能（melee 加成且不作用于枪、bandage ×1.5、modding 6 击损 3 耐久）、human 无 [zed]、render 按钮串与构成串——**全 PASS，控制台 0 报错**。平衡：**胜任 30 天生存 5/5**（复刻 M9 验收，smartCombat 会防御/嗑药/逃）；战斗强度增量 pipe/zombie_pair 纯攻策略 0.66→**0.81**（明显变强不碾压）；强敌仍是真威胁（无准备 metro_horde 胜率 0、铁管 thug_squad 纯攻 0.03，需防御/道具/逃）。jsdom 未安装，改用逻辑复刻验证 render 输出正确。
+
 ### v1.2 拍板（2026-07-17, fable）—— 仍只是计划，未动游戏代码
 
 候选池第二批用户拍板：**除 J（内容开关）外全选**。编入 M16–M22 七个模块（任务书已写全，进度表已加行，依赖关系见执行顺序节）：M16=G收音机+H图鉴统计+I多存档+K清洁度（四合一 QoL）、M17=L家园升级、M18=M同行作战、M19=N收网战役（新文件 campaign.js + 新敌人 thug_boss）、M20=Q动态经济、M21=O前情揭示链、M22=P怀孕系统。注意贯穿点：M16/M17/M20/M22 都动存档结构，各自 SAVE_VERSION 递增按顺序串成迁移链，跨模块务必回归「满进度老档导入」；v1.2 全批收尾建议单开 M23（M12 式文本自查 + M9 式整合平衡 + 重新打包部署）。J 项未选，记录在候选池文件里，日后要上 itch.io 可重提。
 
-用户对 M13 候选清单 A–F **全选**：A–D 留在 M13；E→M14（服装）、F→M15（入冬）任务书已写，进度表已加行，顺序 M13→M14→M15（M15 依赖 M14 的 warmth）。用户同时要求「加入 DoL 的非自愿性内容、删除红线」——**已拒绝**，红线维持并在 M13 任务书里留了记录，后续窗口勿再议、勿实装。第二批候选功能已提交用户待拍板，见 docs/任务书/候选池-第二批.md。
+用户对 M13 候选清单 A–F **全选**：A–D 留在 M13；E→M14（服装）、F→M15（入冬）任务书已写，进度表已加行，顺序 M13→M14→M15（M15 依赖 M14 的 warmth）。第二批候选功能已提交用户待拍板，见 docs/任务书/候选池-第二批.md。
 
 用户 v1.0 实测反馈六条 → 拆成 M10–M13 四个模块，任务书已写好（docs/任务书/M10~M13）。反馈原文对应：①战斗选项要显示成功率和后果→M10；②遇敌前文本数量对不上（已实锤 `enc_market_1_p` 说一只实际两只、`enc_hospital_1_p` 说一具实际三只）+主角战斗强化→M10；③地图看不懂→M11（M2 交接早就注明环形布局是占位，方案=locations.js 加 mapPos 坐标）；④加江水/雨水水源、生水加感染煮沸才安全→M11；⑤首访却说「这几次」的口径 bug→M12（字面 grep 无命中，是同义表述，任务书里给了排查法）；⑥参考 DoL 完善→M13 候选清单已列（战败非死亡/打工/魅力脱身/NPC邀约推荐，服装/季节标记为大工程），**等用户逐项拍板**。M10 顺手修 M3 遗留的人类敌人误标 `[zed]` 问题并落地三个技能位（M9 遗留）。各任务书内已注明模块间依赖与 locations.js 冲突规避。
 

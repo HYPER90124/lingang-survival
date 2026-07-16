@@ -22,17 +22,26 @@
   G.data.enemies = G.data.enemies || {};
   G.data.encounters = G.data.encounters || {};
 
-  // ---- 可调常量（M9） -----------------------------------------------------
+  // ---- 可调常量（M9 建立 / M10 调整） -------------------------------------
   var C = {
     fistDmg: [2, 5],
     heavyMult: 1.6,
     heavyEnergy: 10,
     hitNormal: 0.9,
-    hitHeavy: 0.62,
+    hitHeavy: 0.70,          // M10：0.62→0.70，让重击期望伤害不再低于普攻
     defendReduce: 0.4,       // 防御时受到伤害 ×0.4（减伤 60%）
+    defendEnergyRegen: 4,    // M10：防御回合小幅回精力，支撑「防御→重击」循环
     enemyHit: 0.75,
     infectMin: 10, infectMax: 25,
-    fleeBase: 0.5
+    fleeBase: 0.5,
+    // M10 技能落地
+    meleeHitBonus: 0.05,     // skill:melee 近战命中 +0.05
+    meleeDmgBonus: 2,        // skill:melee 近战伤害 +2
+    bandageMult: 1.5,        // skill:bandage 治疗类 fx ×1.5
+    moddingWearEvery: 2,     // skill:modding 每 N 次攻击才损耗 1 点耐久
+    // M10 连击奖励（可选爽感）
+    comboBonus: 1,           // 每段连击追加伤害
+    comboCap: 3              // 连击追加伤害上限
   };
   G.COMBAT_TUNE = C;
 
@@ -63,9 +72,13 @@
       infect: def.infect || 0,
       loot: def.loot || null,
       descPool: def.descPool || [],
+      human: !!def.human,
       alive: true
     };
   }
+
+  // 命中/被咬文案里的名字标签：丧尸包 [zed]，人类（屠夫帮）用原名不套 [zed]
+  function foeName(e) { return e.human ? e.name : '[zed]' + e.name + '[/zed]'; }
 
   function startCombat(encounterId, opts) {
     opts = opts || {};
@@ -98,9 +111,24 @@
     return { dmg: def.dmg || C.fistDmg, hitPool: def.hitPool || null, fists: false, def: def, ref: w };
   }
 
+  // ---- 技能查询 -----------------------------------------------------------
+  function hasSkill(name) { var p = S().player; return !!(p && p.skills && p.skills[name]); }
+  // melee 只对近战武器/徒手生效（枪械 def.ranged 排除）
+  function meleeActive(w) {
+    if (!hasSkill('melee')) return false;
+    if (w.fists) return true;
+    return !(w.def && w.def.ranged);
+  }
+
   function wearWeapon() {
     var w = S().player.weapon;
     if (!w) return;
+    // skill:modding —— 每两次攻击才损耗 1 点耐久（损耗减半）
+    if (hasSkill('modding')) {
+      var cs = S().combat;
+      cs._wearTick = (cs._wearTick || 0) + 1;
+      if (cs._wearTick % C.moddingWearEvery !== 0) return;
+    }
     w.durability -= 1;
     if (w.durability <= 0) {
       var def = G.engine.itemDef(w.id);
@@ -122,53 +150,106 @@
     var target = firstAlive();
     if (!target) return;
     var w = weaponInfo();
-    var hitChance = heavy ? C.hitHeavy : C.hitNormal;
+    var melee = meleeActive(w);
+    var hitChance = (heavy ? C.hitHeavy : C.hitNormal) + (melee ? C.meleeHitBonus : 0);
+    hitChance = G.engine.clamp(hitChance, 0, 1);
     if (heavy) G.engine.statAdd('energy', -C.heavyEnergy);
 
     if (Math.random() > hitChance) {
+      combat.combo = 0;                                   // 落空则连击中断
       log.push('你' + (heavy ? '奋力挥出重击但落了空' : '的攻击被躲开了') + '。');
     } else {
-      var base = rand(w.dmg[0], w.dmg[1]);
-      var dmg = Math.round(heavy ? base * C.heavyMult : base);
+      var base = rand(w.dmg[0], w.dmg[1]) + (melee ? C.meleeDmgBonus : 0);
+      var combo = combat.combo = (combat.combo || 0) + 1;
+      var comboAdd = Math.min((combo - 1) * C.comboBonus, C.comboCap);
+      var dmg = Math.round(heavy ? base * C.heavyMult : base) + comboAdd;
       target.hp -= dmg;
       var phrase = w.hitPool ? pick(w.hitPool) : (w.fists ? '拳头砸中' : '击中');
-      log.push('你' + phrase + '[zed]' + target.name + '[/zed]，造成 ' + dmg + ' 点伤害。');
-      if (target.hp <= 0) { target.alive = false; log.push('[zed]' + target.name + '[/zed]倒下不再动弹。'); }
+      log.push('你' + phrase + foeName(target) + '，造成 ' + dmg + ' 点伤害' +
+        (comboAdd > 0 ? '（连击 +' + comboAdd + '）' : '') + '。');
+      if (target.hp <= 0) { target.alive = false; log.push(foeName(target) + '倒下不再动弹。'); }
     }
     if (!w.fists) wearWeapon();
   }
+
+  // skill:bandage —— med 类道具的治疗类 fx（hp 增益 / 感染削减）×bandageMult。
+  // 返回可直接交给 applyFx 的 fx（无技能或非治疗类时原样返回 def.fx）。
+  function medBoostFx(def) {
+    if (!def || !def.fx) return def && def.fx;
+    if (def.type !== 'med' || !hasSkill('bandage') || !def.fx.stat) return def.fx;
+    var fx = def.fx, clone = {};
+    for (var k in fx) clone[k] = fx[k];
+    clone.stat = {};
+    for (var st in fx.stat) {
+      var v = fx.stat[st];
+      if ((st === 'hp' && v > 0) || (st === 'infection' && v < 0)) v = Math.round(v * C.bandageMult);
+      clone.stat[st] = v;
+    }
+    return clone;
+  }
+  G.engine.medBoostFx = medBoostFx;
 
   function useItemInCombat(itemId) {
     var log = S().combat.log;
     if (!itemId || !G.engine.hasItem(itemId)) { log.push('你没有可用的东西。'); return; }
     var def = G.engine.itemDef(itemId);
-    G.engine.applyFx(def && def.fx);
+    G.engine.applyFx(medBoostFx(def));
     G.engine.removeItem(itemId, 1);
     log.push('你使用了[item]' + ((def && def.name) || itemId) + '[/item]。');
   }
 
-  function tryFlee() {
-    var combat = S().combat, log = combat.log;
+  // 逃跑成功率（tryFlee 与 combatOptionInfo 共用同一公式，防两处漂移）
+  function fleeChance() {
+    var combat = S().combat;
     var energy = S().player.stats.energy;
-    var maxSpeed = Math.max.apply(null, combat.enemies.filter(function (e) { return e.alive; }).map(function (e) { return e.speed; }));
+    var alive = combat.enemies.filter(function (e) { return e.alive; });
+    var maxSpeed = alive.length ? Math.max.apply(null, alive.map(function (e) { return e.speed; })) : 1;
     var chance = C.fleeBase + (energy - 50) / 100 - maxSpeed * 0.1;
     if (G.engine.isOverweight()) chance -= 0.4;                 // 超重难以脱身
-    chance = G.engine.clamp(chance, 0.05, 0.95);
+    return G.engine.clamp(chance, 0.05, 0.95);
+  }
+
+  function tryFlee() {
+    var log = S().combat.log;
+    var chance = fleeChance();
     G.engine.statAdd('energy', -5);
     if (Math.random() < chance) { log.push('你抓住空档拔腿就跑，甩开了它们。'); return true; }
     log.push('你想逃，却被拦了下来。');
     return false;
   }
 
+  // ---- 选项实时数据（供 UI 在按钮上显示成功率/后果） -----------------------
+  function playerHitInfo(heavy) {
+    var w = weaponInfo();
+    var h = (heavy ? C.hitHeavy : C.hitNormal) + (meleeActive(w) ? C.meleeHitBonus : 0);
+    return G.engine.clamp(h, 0, 1);
+  }
+  function playerDmgRange(heavy) {
+    var w = weaponInfo(), bonus = meleeActive(w) ? C.meleeDmgBonus : 0;
+    var lo = w.dmg[0] + bonus, hi = w.dmg[1] + bonus;
+    if (heavy) { lo = Math.round(lo * C.heavyMult); hi = Math.round(hi * C.heavyMult); }
+    return [lo, hi];
+  }
+  function combatOptionInfo() {
+    if (!inCombat()) return null;
+    return {
+      attack: { hit: playerHitInfo(false), dmg: playerDmgRange(false) },
+      heavy:  { hit: playerHitInfo(true), dmg: playerDmgRange(true), energy: C.heavyEnergy },
+      defend: { reduce: 1 - C.defendReduce, energy: C.defendEnergyRegen },
+      flee:   { chance: fleeChance() }
+    };
+  }
+  G.engine.combatOptionInfo = combatOptionInfo;
+
   function enemyTurn() {
     var combat = S().combat, log = combat.log;
     combat.enemies.forEach(function (e) {
       if (!e.alive) return;
-      if (Math.random() > C.enemyHit) { log.push('[zed]' + e.name + '[/zed]扑空。'); return; }
+      if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
       G.engine.statAdd('hp', -dmg);
-      var desc = e.descPool.length ? pick(e.descPool) : '[zed]' + e.name + '[/zed]咬了上来';
+      var desc = e.descPool.length ? pick(e.descPool) : foeName(e) + '咬了上来';
       log.push(desc + '，你受到 ' + dmg + ' 点伤害。');
       // 感染判定
       if (e.infect && Math.random() < e.infect) {
@@ -238,9 +319,13 @@
     switch (action) {
       case 'attack': playerAttack(false); break;
       case 'heavy':  playerAttack(true); break;
-      case 'defend': combat.log.push('你举起手臂/武器格挡，准备承受下一击。'); break;
-      case 'item':   useItemInCombat(param); break;
-      case 'flee':   fled = tryFlee(); break;
+      case 'defend':
+        combat.combo = 0;
+        G.engine.statAdd('energy', C.defendEnergyRegen);       // M10：防御小幅回精力
+        combat.log.push('你举起手臂/武器格挡，准备承受下一击，趁隙喘了口气。');
+        break;
+      case 'item':   combat.combo = 0; useItemInCombat(param); break;
+      case 'flee':   combat.combo = 0; fled = tryFlee(); break;
       default: combat.log.push('（无效动作）');
     }
 

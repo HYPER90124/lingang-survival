@@ -344,6 +344,20 @@
   }
   G.ui.showLocation = showLocation;
 
+  // 把编组 id / 敌人 id / 敌人 id 数组解析成「跛行者×2、奔跑者」这样的构成串
+  function encounterComposition(encId) {
+    var enc = G.data.encounters || {}, ene = G.data.enemies || {};
+    var ids = Array.isArray(encId) ? encId : (enc[encId] || [encId]);
+    var order = [], counts = {};
+    ids.forEach(function (id) {
+      var def = ene[id];
+      var nm = (def && def.name) || id;
+      if (counts[nm] == null) { counts[nm] = 0; order.push(nm); }
+      counts[nm]++;
+    });
+    return order.map(function (nm) { return counts[nm] > 1 ? nm + '×' + counts[nm] : nm; }).join('、');
+  }
+
   // ---- passage 渲染 -------------------------------------------------------
   function showPassage(id) {
     navSeq++;
@@ -360,7 +374,13 @@
     if (choices.length) {
       choices.forEach(function (c) {
         var btn = h('button', { class: 'btn', onclick: function () { G.engine.selectChoice(c); } });
-        btn.innerHTML = G.ui.tags.parse(c.label || '');
+        var html = G.ui.tags.parse(c.label || '');
+        // M10 系统级保险：选项若触发战斗，自动后缀敌方构成，防剧情文本数量写错误导玩家
+        if (c.fx && c.fx.combat) {
+          var comp = encounterComposition(c.fx.combat);
+          if (comp) html += ' <span class="enc-tag">（' + comp + '）</span>';
+        }
+        btn.innerHTML = html;
         list.appendChild(btn);
       });
     } else {
@@ -420,11 +440,22 @@
     function actBtn(label, action) {
       return h('button', { class: 'btn', text: label, onclick: function () { runCombatAction(action); } });
     }
-    actions.appendChild(actBtn('攻击', 'attack'));
-    actions.appendChild(actBtn('重击', 'heavy'));
-    actions.appendChild(actBtn('防御', 'defend'));
+    // M10：把实时成功率/伤害/后果渲染到按钮上
+    var info = G.engine.combatOptionInfo ? G.engine.combatOptionInfo() : null;
+    function pct(x) { return Math.round(x * 100) + '%'; }
+    function dmgTxt(r) { return r[0] === r[1] ? r[0] + '伤' : r[0] + '-' + r[1] + '伤'; }
+    var atkLabel = '攻击', heavyLabel = '重击', defLabel = '防御', fleeLabel = '逃跑';
+    if (info) {
+      atkLabel = '攻击（' + pct(info.attack.hit) + '·' + dmgTxt(info.attack.dmg) + '）';
+      heavyLabel = '重击（' + pct(info.heavy.hit) + '·' + dmgTxt(info.heavy.dmg) + '·-' + info.heavy.energy + '精力）';
+      defLabel = '防御（-' + Math.round(info.defend.reduce * 100) + '%伤·+' + info.defend.energy + '精力）';
+      fleeLabel = '逃跑（' + pct(info.flee.chance) + '）';
+    }
+    actions.appendChild(actBtn(atkLabel, 'attack'));
+    actions.appendChild(actBtn(heavyLabel, 'heavy'));
+    actions.appendChild(actBtn(defLabel, 'defend'));
     actions.appendChild(h('button', { class: 'btn', text: '用道具', onclick: openCombatItemPicker }));
-    actions.appendChild(actBtn('逃跑', 'flee'));
+    actions.appendChild(actBtn(fleeLabel, 'flee'));
     screen.appendChild(actions);
 
     el.appendChild(screen);
