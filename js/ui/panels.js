@@ -284,6 +284,8 @@
     for (var k in attrs) el.setAttribute(k, attrs[k]);
     return el;
   }
+  // M11：按 G.data.locations[id].mapPos（0–100 逻辑坐标）真实摆放，替代原环形自动布局；
+  // 缺 mapPos 的地点（理论上不存在，防御性兜底）落在画布中心。
   function openMap() {
     openTop({
       title: '地图',
@@ -293,15 +295,22 @@
         if (!ids.length) { body.appendChild(h('div', { class: 'inv-empty', text: '地图数据未加载（等待 M3）' })); return; }
         var cur = S().player.location;
         var neighbors = G.engine.locationNeighbors ? G.engine.locationNeighbors(cur) : {};
+        var shortcutUnlocked = !!(G.engine.getFlag && G.engine.getFlag('world.sewerShortcut'));
 
-        var size = 280, cx = size / 2, cy = size / 2, r = size / 2 - 34;
+        var size = 300, pad = 32, span = size - 2 * pad;
         var pos = {};
-        ids.forEach(function (id, i) {
-          var ang = (i / ids.length) * Math.PI * 2 - Math.PI / 2;
-          pos[id] = { x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang) };
+        ids.forEach(function (id) {
+          var mp = locs[id].mapPos || { x: 50, y: 50 };
+          pos[id] = { x: pad + (mp.x / 100) * span, y: pad + (mp.y / 100) * span };
         });
 
         var svg = svgEl('svg', { viewBox: '0 0 ' + size + ' ' + size, class: 'map-svg' });
+        function midLabel(a, b, minutes) {
+          var t = svgEl('text', { class: 'map-edge-label', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+          t.textContent = minutes + '分';
+          return t;
+        }
+        // 相邻地点连线（实线，标注移动分钟数）
         var drawn = {};
         ids.forEach(function (id) {
           Object.keys((locs[id].adjacent) || {}).forEach(function (nb) {
@@ -309,14 +318,30 @@
             var key = [id, nb].sort().join('-');
             if (drawn[key]) return; drawn[key] = true;
             svg.appendChild(svgEl('line', { class: 'map-edge', x1: pos[id].x, y1: pos[id].y, x2: pos[nb].x, y2: pos[nb].y }));
+            svg.appendChild(midLabel(pos[id], pos[nb], locs[id].adjacent[nb]));
           });
         });
+        // 下水道捷径（虚线，仅 world.sewerShortcut 解锁后画出）
+        if (shortcutUnlocked) {
+          ids.forEach(function (id) {
+            Object.keys((locs[id].shortcuts) || {}).forEach(function (nb) {
+              if (!pos[nb]) return;
+              svg.appendChild(svgEl('line', { class: 'map-edge shortcut', x1: pos[id].x, y1: pos[id].y, x2: pos[nb].x, y2: pos[nb].y }));
+              svg.appendChild(midLabel(pos[id], pos[nb], locs[id].shortcuts[nb]));
+            });
+          });
+        }
+        // 地点节点：危险度着色（0 绿→3 红）、营业时间外灰显、当前/可达描边
         ids.forEach(function (id) {
-          var cls = 'map-node' + (id === cur ? ' current' : (neighbors[id] != null ? ' adj' : ''));
+          var loc = locs[id];
+          var open = G.engine.isLocationOpen ? G.engine.isLocationOpen(id) : true;
+          var cls = 'map-node danger-' + (loc.danger || 0)
+            + (id === cur ? ' current' : (neighbors[id] != null ? ' adj' : ''))
+            + (!open ? ' closed' : '');
           var g = svgEl('g', { class: cls });
-          g.appendChild(svgEl('circle', { cx: pos[id].x, cy: pos[id].y, r: id === cur ? 10 : 7 }));
-          var t = svgEl('text', { x: pos[id].x, y: pos[id].y + (pos[id].y > cy ? 18 : -12) });
-          t.textContent = locs[id].name || id;
+          g.appendChild(svgEl('circle', { cx: pos[id].x, cy: pos[id].y, r: id === cur ? 9 : 6 }));
+          var t = svgEl('text', { x: pos[id].x, y: pos[id].y + (pos[id].y > size / 2 ? 15 : -10) });
+          t.textContent = loc.name || id;
           g.appendChild(t);
           g.addEventListener('click', function () {
             if (id === cur) return;
@@ -331,7 +356,8 @@
         var wrap = h('div', { class: 'map-wrap' });
         wrap.appendChild(svg);
         body.appendChild(wrap);
-        body.appendChild(h('div', { class: 'map-legend', text: '金色 = 当前位置　青色描边 = 可直接前往' }));
+        body.appendChild(h('div', { class: 'map-legend', text: '青色描边 = 可直接前往　灰显 = 现在没开门　虚线 = 下水道捷径' }));
+        body.appendChild(h('div', { class: 'map-legend', text: '危险度：绿→黄→橙→红（0→3）' }));
       }
     });
   }

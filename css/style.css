@@ -257,17 +257,24 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .body-stat .note { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
 .body-stat.abnormal .label .val, .body-stat.abnormal .note { color: var(--danger); }
 
-/* ---- 地图面板 ------------------------------------------------------------------ */
+/* ---- 地图面板（M11：按 mapPos 真实地理摆放，替代原环形布局） ------------------- */
 .map-wrap { width: 100%; overflow: hidden; }
 .map-svg { width: 100%; height: auto; display: block; }
-.map-edge { stroke: var(--border); stroke-width: 2; }
-.map-node circle { fill: var(--bg-card); stroke: var(--border); stroke-width: 2; }
+.map-edge { stroke: var(--border); stroke-width: 1.5; }
+.map-edge.shortcut { stroke: var(--tag-place); stroke-dasharray: 3 3; }
+.map-edge-label { fill: var(--fg-dim); font-size: 6px; text-anchor: middle; }
+.map-node circle { stroke: var(--border); stroke-width: 2; }
 .map-node text { fill: var(--fg-dim); font-size: 10px; text-anchor: middle; }
-.map-node.current circle { fill: var(--accent); stroke: var(--accent); }
-.map-node.current text { fill: var(--fg-bright); }
-.map-node.adj circle { stroke: var(--tag-place); }
+.map-node.danger-0 circle { fill: var(--ok); }
+.map-node.danger-1 circle { fill: #7a9a45; }
+.map-node.danger-2 circle { fill: var(--warn); }
+.map-node.danger-3 circle { fill: var(--danger); }
+.map-node.current circle { stroke: var(--fg-bright); stroke-width: 3; }
+.map-node.current text { fill: var(--fg-bright); font-weight: bold; }
+.map-node.adj circle { stroke: var(--tag-place); stroke-width: 3; }
+.map-node.closed { opacity: .4; }
 .map-node { cursor: pointer; }
-.map-legend { margin-top: 10px; font-size: 12px; color: var(--fg-dim); }
+.map-legend { margin-top: 6px; font-size: 12px; color: var(--fg-dim); }
 
 /* ---- 系统面板 ------------------------------------------------------------------ */
 .slot-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }

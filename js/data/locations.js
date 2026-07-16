@@ -1,16 +1,24 @@
 /* =============================================================================
- * locations.js — 地点数据 + 移动/搜刮配套小逻辑 + 通用氛围事件（M3）
+ * locations.js — 地点数据 + 移动/搜刮配套小逻辑 + 通用氛围事件（M3；M11 加地图坐标+水源）
  * -----------------------------------------------------------------------------
  * G.data.locations[id] = {
  *   name, descDay, descNight,           // 描述分时段两版，由 locationDesc() 按时段挑选
- *   actions: [ {id,label,type,time,energy,requiresItem?} ],   // 搜刮/采集类行动
+ *   actions: [ {id,label,type,time,energy,requiresItem?,water?,cond?} ],  // 搜刮/采集/取水行动
  *   scavengeTable: [ {tier,weight, items:[{id,chance,count|min&max}]} ],  // 三层稀有度
  *   adjacent: { locId: minutes },       // 相邻地点与移动耗时
  *   shortcuts: { locId: minutes },      // 仅 sewer 登记，随 world.sewerShortcut 解锁双向生效
  *   hours: [start,end] | null,          // 开放时段（分钟，跨午夜写法见 Schema），null=全天
  *   danger: 0-3,                        // 危险度，决定本文件随机事件的量级（非引擎读取字段）
- *   requiresItem: 'flashlight'          // 搜刮该地点需持有的道具（metro/sewer）
+ *   requiresItem: 'flashlight',         // 搜刮该地点需持有的道具（metro/sewer）
+ *   mapPos: {x,y}                       // M11 新增：0–100 逻辑坐标，供地图面板按真实地理摆放，引擎不读
  * }
+ *
+ * action.type 三种：
+ *   'scavenge' —— 走 G.engine.scavenge，按地点 scavengeTable 加权掉落
+ *   'water'    —— 走 G.engine.gatherWater（M11 新增），action.water:'river'|'rain' 区分取水/接雨水，
+ *                  requiresItem:'glassbottle'（消耗 1 个换生水 1 份），rain 型另需 world.rainDay
+ *   'boil'     —— 走 G.engine.boilWater（M11 新增），requiresItem:'lighter'（不消耗），
+ *                  把包里 1 份生水（优先 riverwater，无则 rainwater）转成 boiledwater
  *
  * 配套小逻辑（M1 未提供，数据层补齐，挂到 G.engine）：
  *   G.engine.locationNeighbors(locId)   —— 含 sewer 捷径解锁后的双向可达表 {locId:minutes}
@@ -18,6 +26,8 @@
  *   G.engine.travelTo(destId)           —— 校验可达/开放→扣时间(×timeCostMod)→goLocation
  *   G.engine.scavenge(locId, actionId)  —— 三层加权随机掉落，随 scavenge 次数递减，扣时间/精力，
  *                                          结算后调 checkEvents('action')；返回 {ok,found,msg}
+ *   G.engine.gatherWater(locId,actionId)—— M11：取水/接雨水，见上，返回 {ok,msg}
+ *   G.engine.boilWater(locId,actionId)  —— M11：煮水，见上，返回 {ok,msg}
  * ========================================================================== */
 (function () {
   'use strict';
@@ -30,10 +40,12 @@
       name: '安全屋',
       descDay: '客厅地板铺着旧毯子，窗帘拉得只留一条缝，桌上摆着你这几天攒下的物资。',
       descNight: '你把门栓插死，屋外的声响隔着一层砖墙，烛火晃得墙上影子跟着抖。',
-      actions: [],   // 安全区：睡觉/储物箱/存档由 M2 UI 直接调用引擎接口，不算搜刮行动
+      actions: [
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+      ],   // 安全区：睡觉/储物箱/存档由 M2 UI 直接调用引擎接口，不算搜刮行动
       scavengeTable: [],
       adjacent: { residential: 20, market: 20, bar: 30 },
-      hours: null, danger: 0
+      hours: null, danger: 0, mapPos: { x: 15, y: 40 }
     },
 
     residential: {
@@ -55,7 +67,7 @@
         ] }
       ],
       adjacent: { home: 20, market: 20, hospital: 25, police: 30, church: 20 },
-      hours: null, danger: 2
+      hours: null, danger: 2, mapPos: { x: 30, y: 15 }
     },
 
     market: {
@@ -73,7 +85,7 @@
         { tier: 'rare', weight: 10, items: [ { id: 'antibiotics', chance: 0.1 } ] }
       ],
       adjacent: { home: 20, residential: 20, bar: 20, dock: 30 },
-      hours: [480, 1200], danger: 1
+      hours: [480, 1200], danger: 1, mapPos: { x: 20, y: 60 }
     },
 
     hospital: {
@@ -93,7 +105,7 @@
         ] }
       ],
       adjacent: { residential: 25, campus: 25, police: 30 },
-      hours: null, danger: 2
+      hours: null, danger: 2, mapPos: { x: 55, y: 10 }
     },
 
     police: {
@@ -113,17 +125,19 @@
         ] }
       ],
       adjacent: { residential: 30, bar: 25, hospital: 30, mall: 35 },
-      hours: null, danger: 3
+      hours: null, danger: 3, mapPos: { x: 45, y: 30 }
     },
 
     bar: {
       name: '酒吧·避风港',
       descDay: '白天的酒吧没什么人，苏曼在吧台后面擦杯子，老秦缩在角落打盹。',
       descNight: '灯光昏黄，酒气混着烟味，老秦在门口守着，没人敢在这里动手。',
-      actions: [],   // 中立据点禁械，无搜刮
+      actions: [
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+      ],   // 中立据点禁械，无搜刮
       scavengeTable: [],
       adjacent: { home: 30, market: 20, police: 25, campus: 30, church: 20 },
-      hours: [600, 120], danger: 0
+      hours: [600, 120], danger: 0, mapPos: { x: 40, y: 50 }
     },
 
     campus: {
@@ -141,7 +155,7 @@
         { tier: 'rare', weight: 10, items: [ { id: 'antibiotics', chance: 0.1 }, { id: 'sedative', chance: 0.08 } ] }
       ],
       adjacent: { bar: 30, hospital: 25, park: 25, checkpoint: 35 },
-      hours: null, danger: 2
+      hours: null, danger: 2, mapPos: { x: 80, y: 15 }
     },
 
     metro: {
@@ -162,7 +176,7 @@
       ],
       adjacent: { mall: 35 },
       requiresItem: 'flashlight',
-      hours: null, danger: 3
+      hours: null, danger: 3, mapPos: { x: 65, y: 65 }
     },
 
     park: {
@@ -171,15 +185,15 @@
       descNight: '江边黑得没有一点光，水声盖住了脚步声，不知道什么时候会窜出东西。',
       actions: [
         { id: 'forage', label: '采集野菜', type: 'scavenge', time: 20, energy: 5 },
-        { id: 'collect_water', label: '接雨水', type: 'scavenge', time: 15, energy: 3 }
+        { id: 'river_water', label: '去江边取水', type: 'water', water: 'river', time: 15, energy: 3, requiresItem: 'glassbottle' }
       ],
       scavengeTable: [
-        { tier: 'common', weight: 60, items: [ { id: 'wildveggie', chance: 0.6 }, { id: 'rainwater', chance: 0.5 } ] },
+        { tier: 'common', weight: 60, items: [ { id: 'wildveggie', chance: 0.6 } ] },
         { tier: 'uncommon', weight: 30, items: [ { id: 'herbaltonic', chance: 0.25 }, { id: 'chocolatebar', chance: 0.15 } ] },
         { tier: 'rare', weight: 10, items: [ { id: 'huntingknife', chance: 0.1 } ] }
       ],
       adjacent: { campus: 25, gas: 25, mall: 30 },
-      hours: null, danger: 1   // 昼低危、夜高危，见本文件末尾夜间遇敌事件
+      hours: null, danger: 1, mapPos: { x: 85, y: 35 }   // 昼低危、夜高危，见本文件末尾夜间遇敌事件
     },
 
     gas: {
@@ -188,7 +202,8 @@
       descNight: '招牌灯早灭了，阿豆屋里的煤油灯还亮着，能听见电动工具间歇的响声。',
       actions: [
         { id: 'siphon', label: '抽取汽油', type: 'scavenge', time: 20, energy: 5 },
-        { id: 'scavenge', label: '翻找修车间', type: 'scavenge', time: 25, energy: 6 }
+        { id: 'scavenge', label: '翻找修车间', type: 'scavenge', time: 25, energy: 6 },
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
       ],
       scavengeTable: [
         { tier: 'common', weight: 60, items: [
@@ -200,7 +215,7 @@
         { tier: 'rare', weight: 10, items: [ { id: 'sledgehammer', chance: 0.08 }, { id: 'militaryfirstaid', chance: 0.1 } ] }
       ],
       adjacent: { park: 25, dock: 25, checkpoint: 30 },
-      hours: null, danger: 2
+      hours: null, danger: 2, mapPos: { x: 75, y: 75 }
     },
 
     mall: {
@@ -220,24 +235,29 @@
         ] }
       ],
       adjacent: { police: 35, park: 30, checkpoint: 35, metro: 35 },
-      hours: null, danger: 3
+      hours: null, danger: 3, mapPos: { x: 65, y: 45 }
     },
 
     church: {
       name: '圣心教堂',
       descDay: '教堂彩窗还剩几块完整的，阳光照在空荡的座椅上，陈神父在门口清扫落叶。',
       descNight: '烛台还燃着几支蜡烛，陈神父在祭坛前低声念着什么。',
-      actions: [],   // 安全区，无搜刮；理智恢复与陈神父互动留给 M8
+      actions: [
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+      ],   // 安全区，无搜刮；理智恢复与陈神父互动留给 M8
       scavengeTable: [],
       adjacent: { residential: 20, bar: 20 },
-      hours: [360, 1320], danger: 0
+      hours: [360, 1320], danger: 0, mapPos: { x: 10, y: 20 }
     },
 
     dock: {
       name: '码头仓库',
       descDay: '集装箱码得东倒西歪，老蔡蹲在码头边上，盯着江面发呆。',
       descNight: '江雾很浓，仓库那边偶尔有手电光晃过，不知道是不是自己人。',
-      actions: [{ id: 'scavenge', label: '翻找集装箱', type: 'scavenge', time: 30, energy: 7 }],
+      actions: [
+        { id: 'scavenge', label: '翻找集装箱', type: 'scavenge', time: 30, energy: 7 },
+        { id: 'river_water', label: '去江边取水', type: 'water', water: 'river', time: 15, energy: 3, requiresItem: 'glassbottle' }
+      ],
       scavengeTable: [
         { tier: 'common', weight: 60, items: [
           { id: 'rope', chance: 0.3 }, { id: 'glassbottle', chance: 0.3 }, { id: 'scrapmetal', chance: 0.3 }
@@ -248,7 +268,7 @@
         { tier: 'rare', weight: 10, items: [ { id: 'revolver', chance: 0.06 }, { id: 'toolkit', chance: 0.1 } ] }
       ],
       adjacent: { market: 30, gas: 25, sewer: 30 },
-      hours: null, danger: 2
+      hours: null, danger: 2, mapPos: { x: 30, y: 80 }
     },
 
     checkpoint: {
@@ -268,7 +288,7 @@
         ] }
       ],
       adjacent: { campus: 35, gas: 30, mall: 35 },
-      hours: null, danger: 3
+      hours: null, danger: 3, mapPos: { x: 90, y: 55 }
     },
 
     sewer: {
@@ -288,9 +308,21 @@
       adjacent: { dock: 30 },
       shortcuts: { metro: 15, checkpoint: 20, market: 25 },   // world.sewerShortcut 解锁后双向生效
       requiresItem: 'flashlight',
-      hours: null, danger: 3
+      hours: null, danger: 3, mapPos: { x: 50, y: 85 }
     }
   };
+
+  // 雨天「接雨水」：任意室外地点新增该行动（home/bar/church 是室内安全区，不给）；
+  // 需 world.rainDay 才可见（render.js 按 action.cond 过滤），需 glassbottle（消耗 1 换生水 1）。
+  var RAIN_EXEMPT = { home: true, bar: true, church: true };
+  Object.keys(G.data.locations).forEach(function (id) {
+    if (RAIN_EXEMPT[id]) return;
+    G.data.locations[id].actions.push({
+      id: 'rain_water', label: '接雨水', type: 'water', water: 'rain',
+      time: 20, energy: 3, requiresItem: 'glassbottle',
+      cond: { flag: { 'world.rainDay': true } }
+    });
+  });
 
   // ---- 配套小逻辑 -----------------------------------------------------------
   function locationDesc(locId) {
@@ -399,6 +431,55 @@
     return { ok: true, found: found, msg: msg };
   }
   G.engine.scavenge = scavenge;
+
+  function findAction(locId, actionId) {
+    var loc = G.data.locations[locId];
+    if (!loc) return null;
+    for (var i = 0; i < (loc.actions || []).length; i++) if (loc.actions[i].id === actionId) return loc.actions[i];
+    return null;
+  }
+
+  // 取水（M11）：'去江边取水'（水源常驻）/'接雨水'（仅雨天，render.js 按 cond 过滤显示）。
+  // 消耗 1 个 glassbottle 换生水 1 份，不走 scavengeTable（结果确定，非概率掉落）。
+  function gatherWater(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    if (action.requiresItem && !G.engine.hasItem(action.requiresItem)) {
+      var need = G.engine.itemDef(action.requiresItem);
+      return { ok: false, msg: '没有[item]' + (need ? need.name : action.requiresItem) + '[/item]，没法盛水。' };
+    }
+    if (action.water === 'rain' && !G.engine.getFlag('world.rainDay')) {
+      return { ok: false, msg: '今天没下雨，接不到雨水。' };
+    }
+    G.engine.removeItem(action.requiresItem, 1);
+    var itemId = action.water === 'rain' ? 'rainwater' : 'riverwater';
+    G.engine.addItem(itemId, 1);
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    var def = G.engine.itemDef(itemId);
+    return { ok: true, msg: '打了一瓶[item]' + (def ? def.name : itemId) + '[/item]，生水没烧开不能直接喝。' };
+  }
+  G.engine.gatherWater = gatherWater;
+
+  // 煮水（M11）：需 requiresItem（打火机）在包但不消耗；把包里 1 份生水转成 boiledwater，
+  // 两种生水都有时优先煮江水（riverwater），无江水才煮雨水（rainwater），实现从简不弹选择。
+  function boilWater(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    if (action.requiresItem && !G.engine.hasItem(action.requiresItem)) {
+      var need = G.engine.itemDef(action.requiresItem);
+      return { ok: false, msg: '没有[item]' + (need ? need.name : action.requiresItem) + '[/item]，生不起火。' };
+    }
+    var raw = G.engine.hasItem('riverwater') ? 'riverwater' : (G.engine.hasItem('rainwater') ? 'rainwater' : null);
+    if (!raw) return { ok: false, msg: '包里没有生水可以煮。' };
+    G.engine.removeItem(raw, 1);
+    G.engine.addItem('boiledwater', 1);
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    var rawDef = G.engine.itemDef(raw);
+    return { ok: true, msg: '把[item]' + (rawDef ? rawDef.name : raw) + '[/item]烧开，得到[item]净水[/item]。' };
+  }
+  G.engine.boilWater = boilWater;
 
   // ---- 通用氛围/收获/遇敌 random 事件（每地点 2–3 条，无剧情，给 M8 事件池打底） ----
   function passage(id, text, choices) {

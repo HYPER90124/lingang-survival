@@ -258,11 +258,14 @@
     if (!ev) G.ui.showLocation();
   }
 
-  // M3 数据行动（目前仅 type:'scavenge'，交给 G.engine.scavenge 处理掉落/耗时/事件结算）
+  // M3/M11 数据行动：type:'scavenge'→G.engine.scavenge，'water'/'boil'（M11 水源系统）→
+  // G.engine.gatherWater/boilWater，均处理掉落/耗时/事件结算，形状一致（返回 {ok,msg}）。
+  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater' };
   function runDataAction(locId, action) {
-    if (action.type !== 'scavenge') { console.warn('[ui] 未知地点行动类型:', action.type); return; }
+    var fnName = DATA_ACTION_FN[action.type];
+    if (!fnName || !G.engine[fnName]) { console.warn('[ui] 未知地点行动类型:', action.type); return; }
     var seq0 = navSeq;
-    var res = G.engine.scavenge(locId, action.id);
+    var res = G.engine[fnName](locId, action.id);
     if (S() && S()._dead) return;
     if (res && res.msg) toast(G.ui.tags.strip(res.msg));
     if (navSeq === seq0) G.ui.showLocation();
@@ -301,15 +304,23 @@
       el.appendChild(npcWrap);
     }
 
-    var dataActions = def.actions || [];
+    // M11：数据行动支持可选 cond（如「接雨水」仅雨天出现），无 cond 则恒显示。
+    var dataActions = (def.actions || []).filter(function (a) { return !a.cond || G.engine.checkCond(a.cond); });
     var extraActions = (LOCATION_EXTRA_ACTIONS[locId] || []).concat(tradeActionsFor(locId))
       .filter(function (a) { return !a.cond || G.engine.checkCond(a.cond); });
     if (dataActions.length || extraActions.length) {
       el.appendChild(h('div', { class: 'section-title', text: '行动' }));
       var alist = h('div', { class: 'action-list' });
       dataActions.forEach(function (a) {
-        var btn = h('button', { class: 'btn', onclick: function () { runDataAction(locId, a); } });
-        btn.innerHTML = G.ui.tags.parse(a.label || '');
+        // requiresItem 缺失时置灰并在文案追加提示（M11：玻璃瓶/打火机等取水+煮水前置道具）。
+        var locked = a.requiresItem && !G.engine.hasItem(a.requiresItem);
+        var btn = h('button', { class: 'btn' + (locked ? ' disabled' : ''), onclick: function () { runDataAction(locId, a); } });
+        var label = a.label || '';
+        if (locked) {
+          var need = G.engine.itemDef(a.requiresItem);
+          label += '（需要' + (need ? need.name : a.requiresItem) + '）';
+        }
+        btn.innerHTML = G.ui.tags.parse(label);
         alist.appendChild(btn);
       });
       extraActions.forEach(function (a) {

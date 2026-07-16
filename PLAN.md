@@ -31,7 +31,7 @@
 | M8 | 边缘 NPC + 世界事件池 | fable | ✅ 完成 |
 | M9 | 整合、平衡、打包、部署 Pages | opus | ✅ 完成（v1.0） |
 | M10 | 战斗体验重做（选项成功率/后果显示、遇敌数量文本、主角强化） | opus | ✅ 完成 |
-| M11 | 地图地理重排 + 江水/雨水/煮水系统 | sonnet | ⬜ 待开工 |
+| M11 | 地图地理重排 + 江水/雨水/煮水系统 | sonnet | ✅ 完成 |
 | M12 | 全库文本逻辑自查（首次/重复口径等） | fable | ⬜ 待开工 |
 | M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ⬜ 待开工 |
 | M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ⬜ 已拍板，待开工 |
@@ -51,6 +51,26 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M11（2026-07-17, sonnet）
+地图地理重排 + 水源系统完成。改动文件：`locations.js`（mapPos + 水源行动 + gatherWater/boilWater 引擎函数）、`items.js`（riverwater/boiledwater 新增，rainwater 口径调整）、`render.js`（数据行动 cond 过滤 + requiresItem 置灰提示 + 按类型分发 scavenge/gatherWater/boilWater）、`panels.js`（地图面板重写）、`style.css`（地图配色/虚线/灰显）。`dist/game.html` 已 `node tools/build.js` 重打（499.8KB）。存档结构未动（新道具/行动均走已有 inventory/scavenge 结构）。
+
+**1. 地图重排**：15 地点全部按任务书给定坐标表加了 `mapPos:{x,y}`（纯新增字段，`adjacent` 数值一字未动）。`panels.js openMap()` 改为按 mapPos 摆放（画布 300×300，pad 32），连线标注移动分钟数（相邻实线；下水道捷径虚线，仅 `world.sewerShortcut` 解锁后画出，用当前 `locationNeighbors` 之外的全量 `shortcuts` 字段扫描，不局限于当前地点）。节点按 `danger` 0–3 上色（绿→黄绿→橙→红），营业时间外（`isLocationOpen` 为假）降透明度灰显，当前地点/可达地点用描边区分（不再用旧的实心色块，避免和危险度配色冲突）。地图容器沿用 M2 的 `.map-wrap{overflow:hidden}+width:100%`，不会横向滚动。
+
+**2. 水源系统**：`items.js` 新增 `riverwater`（江水，thirst+15/infection+8/price0）、`boiledwater`（净水，thirst+25/无感染/price2）；`rainwater` 感染 3→8，desc 改口注明「没烧开，直接喝要闹肚子」。`locations.js` 新增两个数据行动 type：
+- `type:'water'`（`G.engine.gatherWater`）：`action.water:'river'|'rain'` 区分。park/dock 各加「去江边取水」（15 分钟，恒可用）；除 home/bar/church 外全部 12 个地点（含 metro/sewer——任务书原文只排除 home/bar/church，未单独排除地下地点，照字面执行）用一个循环批量挂「接雨水」（20 分钟，`cond:{flag:{'world.rainDay':true}}` 门控，UI 侧只在下雨时显示）。两者均需 `requiresItem:'glassbottle'` 且消耗 1 个换生水 1 份。
+- `type:'boil'`（`G.engine.boilWater`）：home/gas/bar/church 各加「烧水煮沸」（20 分钟/精力-3），需 `requiresItem:'lighter'`（只判定不消耗），把包里 1 份生水转 boiledwater，两种都有时优先煮 riverwater（`实现从简`，未做弹窗选择）。
+- **顺手清理 M3 遗留 bug**：park 原有的 `collect_water`（标签「接雨水」但走 scavenge 类型，实际从与 forage 共用的 scavengeTable 随机开，会开出野菜/猎刀等无关物——本来就是错的）已删除，改成上面的规范水源行动；park 的 scavengeTable 里原本混进的 `rainwater` 掉落一并移除（避免和新水源行动重复产出、绕过 glassbottle 成本）。M8 的 `rain_harvest_1`（park 雨天采收事件）产出走的是直接 `fx.item`（不经 scavengeTable），文案未提「能直接喝」，无需改文案，数值随 `rainwater` 定义自动继承新感染值。
+
+**3. UI 联动**（Schema 未列 render.js 在本模块必读文件内，但水源行动的可见性/置灰门控必须在这层做，判定为「接口缺口的合理扩展」）：`render.js` 的地点「行动」区块新增两处能力——① `def.actions` 现在按 `a.cond` 过滤（此前只有 M2 的 extraActions 支持 cond，M3 数据行动没有，「接雨水」必须靠这个才能只在下雨天出现）；② `requiresItem` 缺失时按钮加 `.disabled`（复用 M2 早就定义好但一直没人用的 `.btn.disabled` CSS）并在文案后追加「（需要XX）」提示，而不是等点击后才用 toast 报错——这个改动是通用的，metro/sewer 的手电筒门控也顺带获得了同样的置灰体验（原来是可点击但报错，现在点击前就能看出缺什么）。`runDataAction` 按 `action.type` 查表分发到 `scavenge`/`gatherWater`/`boilWater`，三者返回值形状一致（`{ok,msg}`），无需改调用侧其余逻辑。
+
+**平衡自测（Node vm 沙箱，用真实引擎+全部数据文件跑蒙特卡洛，未入库）**：
+- 市场（market）反复搜刮，只统计饮水类道具换算的口渴值：**fresh（未搜空，count 强制清零）基准 0.41 口渴/分钟**（仅瓶装水 0.37）；**floor 基准（`scavengeFloor=0.5` 搜空后长期挂底）0.21 口渴/分钟**。
+- park→gas 江水链循环（取水 15 分 + 走 25 分 + 煮水 20 分 + 走回 25 分 = 85 分钟/轮，这是全图最短的取水-煮水地理组合）：**0.29 口渴/分钟**。
+- 结论：新水源速率介于「市场搜空后」（0.21）与「市场新鲜」（0.41）之间——**没有超过新鲜市场的期望效率，红线未破**；且严格慢于市场搜空前的常规效率，只在市场被打空的中后期才显出优势，符合任务书「兜底选项而非最优解」的定位。若直接生喝江水/雨水不煮沸，15 分钟即得 thirst+15 但 infection+8（1.0 口渴/分钟，看似最快），这是任务书本来就要的风险对价（生水伤感染），不算破线。glassbottle 消耗（price 1）在此基础上还会再摊薄一点效率，未单独计入上面的谏率但方向一致（更不利于水链）。
+- 未跑 M9 式 30 天满流程生存验证（本模块只新增可选资源分支，不改饥渴阈值/日结算，判断为低风险，交给下一次全库整合测试覆盖）。
+
+**已知限制 / 留给 M12**：新增道具 id：`riverwater`/`boiledwater`（+ `rainwater` 数值变化）；新增行动 id：`river_water`（park/dock）、`rain_water`（12 个地点，除 home/bar/church）、`boil_water`（home/gas/bar/church）——M12 文本自查时注意「接雨水」按钮文案在非雨天不可见是预期行为，不是缺文本。地图面板的分钟标签是新加的纯数字文本，未做碰撞避让，个别密集处（police/bar/hospital 三角）标签可能视觉重叠，非阻断性问题，M16 QoL 若做地图优化可顺手改。
 
 ### M10（2026-07-17, opus）
 战斗体验重做完成。改动文件：`combat.js`（核心）、`items.js`（bandage 联动 + 枪械 ranged 标记）、`enemies.js`（human 标记 + 头注更新）、`render.js`（战斗按钮实时数据 + choice 遇敌构成后缀）、`css/style.css`（按钮字号 + `.enc-tag`）、`locations.js`/`worldevents.js`（文本数量修正）。`dist/game.html` 已 `node tools/build.js` 重打（491.3KB）。存档结构未动。

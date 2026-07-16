@@ -168,8 +168,16 @@
       fx: { stat: { thirst: 30 } }, price: 5, weight: 1
     },
     rainwater: {
-      name: '雨水', type: 'drink', desc: '接的一壶雨水，看着还算清亮。',
-      fx: { stat: { thirst: 20, infection: 3 } }, price: 0, weight: 1
+      name: '雨水', type: 'drink', desc: '接的一壶雨水，没烧开，直接喝要闹肚子。',
+      fx: { stat: { thirst: 20, infection: 8 } }, price: 0, weight: 1
+    },
+    riverwater: {
+      name: '江水', type: 'drink', desc: '从江边打的一瓶生水，浑浊带腥气，没烧开不能喝。',
+      fx: { stat: { thirst: 15, infection: 8 } }, price: 0, weight: 1
+    },
+    boiledwater: {
+      name: '净水', type: 'drink', desc: '烧开过的水，放凉了才装瓶，喝着放心。',
+      fx: { stat: { thirst: 25 } }, price: 2, weight: 1
     },
     liquor: {
       name: '烈酒', type: 'drink', desc: '没贴标的烈酒，入口烧得从喉咙一路到胃。',
