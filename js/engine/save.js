@@ -20,7 +20,7 @@
   window.G = window.G || {};
   G.engine = G.engine || {};
 
-  G.SAVE_VERSION = 6;   // M14：player.outfit；M15：player.stats.cold；M16：world.codex/world.stats + player.stats.grime；M17：world.homeUpg/gardenDay + homeStorage；M18：world.companion
+  G.SAVE_VERSION = 7;   // M14：player.outfit；M15：player.stats.cold；M16：world.codex/world.stats + player.stats.grime；M17：world.homeUpg/gardenDay + homeStorage；M18：world.companion；M20：world.market
   var PREFIX = 'lgys_save_';
   var LEGACY_KEY = 'lgys_save';   // M16：M9 之前可能存在的无槽位后缀单档键（一次性迁入槽 1）
   var SLOTS = [1, 2, 3, 'auto'];
@@ -131,6 +131,8 @@
     if (!d.homeStorage) d.homeStorage = [];
     // M18：同行容器兜底（手工档/极端空档）；undefined→null（无同行）
     if (d.world.companion === undefined) d.world.companion = null;
+    // M20：物价波动容器兜底（老档/极端空档）；undefined→day:-1（读入首日按无波动处理）
+    if (d.world.market === undefined) d.world.market = { day: -1, hordeSurgeDays: 0, rainDiscount: false, butcherTax: false, shortage: {} };
     return d;
   }
 

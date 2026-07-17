@@ -209,6 +209,9 @@
     }
     if (w) w._rainedToday = false;
 
+    // M20：跨日结算物价波动（须在 _rainedToday 清零前调用，才能读到「昨天下过雨」）
+    if (G.engine.marketSettle) G.engine.marketSettle();
+
     // M18：同行到当日 24:00 自动散伙（跨日结算即午夜）
     if (G.engine.companionMidnight) G.engine.companionMidnight();
 
