@@ -19,7 +19,7 @@ js/data/story/   qin.js lin.js mao.js secondary.js minor.js worldevents.js
 tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
 ```
 
-- 存档：localStorage 键 `lgys_save_{槽位}`，3 个槽位 + 自动存档槽；导出/导入为 Base64 JSON 字符串。`G.SAVE_VERSION` 当前 **3**（M14 新增 `player.outfit`；M15 新增 `player.stats.cold`）；结构变更走 `save.js migrate()` 逐版本升级 + `normalize()` 补字段，老档读入自动补默认初始装与 `cold:0`。
+- 存档：localStorage 键 `lgys_save_{槽位}`，3 个槽位 + 自动存档槽；导出/导入为 Base64 JSON 字符串。`G.SAVE_VERSION` 当前 **6**（M14 新增 `player.outfit`；M15 新增 `player.stats.cold`；M16 新增 `world.codex`/`world.stats` + `player.stats.grime`；M17 新增 `world.homeUpg`/`world.gardenDay` + 顶层 `homeStorage`；M18 新增 `world.companion`）；结构变更走 `save.js migrate()` 逐版本升级 + `normalize()` 补字段，老档读入自动补默认初始装、`cold:0`、图鉴/统计空容器、`grime:0`、家园升级空对象与空储物柜、`companion:null`。M16 另加 `migrateLegacyKey()`：M9 之前若用过无后缀单档键 `lgys_save`，首次 listSaves/load 时一次性迁入槽 1（保留旧键做回退）。
 
 ## GameState（G.state）
 
@@ -32,7 +32,7 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
     location: "home",
     stats: { hp:100, hunger:70, thirst:70, energy:80,
              sanity:80, alcohol:0, addiction:0, infection:0,
-             cold:0 },   // 全部 0–100；cold=寒冷值（M15，入冬后室外累积）
+             cold:0, grime:0 },   // 全部 0–100；cold=寒冷值（M15）；grime=脏污值（M16，搜刮/战斗/下水道累积，洗漱清零）
     bullets: 20,                     // 硬通货
     weapon: null,                    // 装备中武器 {id, durability}
     inventory: [ {id, count} ],      // 武器类单独成条目带 durability
@@ -43,18 +43,28 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
     qin: { met:false, alive:true, affinity:0, stage:0, storyFlags:{}, vars:{} },
     // lin/mao/su/dou/zhou/zhao/chen/cai/fang 同构
   },
-  world: { flags:{}, cooldowns:{} },  // cooldowns: {eventId: 到期绝对分钟}
+  world: { flags:{}, cooldowns:{},    // cooldowns: {eventId: 到期绝对分钟}
+           codex:{ enemies:{id:true} },                       // M16：已见敌人图鉴
+           stats:{ kills:{id:n}, scavenges:0, fights:0, flees:0 },   // M16：生存统计
+           homeUpg:{ door:false, rain:false, garden:false, storage:false },  // M17：家园四项升级
+           gardenDay: null,                                   // M17：小菜园最近收获日（未建为 null）
+           companion: null },                                 // M18：当前同行 NPC {id, until}（until=当日24:00 的 absMinute），无则 null
   calendar: {
     appointments: [ {day, minute, label, eventId} ],   // 剧情登记的约定
     milestones:   [ {day, label} ]                     // 重要日子回顾
   },
-  scavenge: {}    // {locationId: 已搜刮次数}，用于掉落递减
+  scavenge: {},   // {locationId: 已搜刮次数}，用于掉落递减
+  homeStorage: [] // M17：家园储物柜 {id,count}，不计入 invWeight/carryCap，容量走 TUNE.homeStorageCap（重量）
 }
 ```
 
 - 状态数值全部钳制在 0–100。绝对时间 = day*1440 + minute，跨日由 time.js 统一处理。
-- **阈值效果（M1 实现，M3 配数值）**：hp=0 死亡（读档）；hunger/thirst 低于 20 开始扣 hp；energy<15 行动耗时 +50%；sanity<20 触发幻觉事件池；alcohol>60 文本进入醉酒变体、行动判定惩罚；addiction>50 每日定时发作事件；infection>80 进入濒死线（限时事件，可被林晚剧情救治）；**cold（M15）>50 精力上限随寒冷等量下压、>80 每 10 分钟失温掉血**。
+- **阈值效果（M1 实现，M3 配数值）**：hp=0 死亡（读档）；hunger/thirst 低于 20 开始扣 hp；energy<15 行动耗时 +50%；sanity<20 触发幻觉事件池；alcohol>60 文本进入醉酒变体、行动判定惩罚；addiction>50 每日定时发作事件；infection>80 进入濒死线（限时事件，可被林晚剧情救治）；**cold（M15）>50 精力上限随寒冷等量下压、>80 每 10 分钟失温掉血**；**grime（M16）>70 触发 NPC 搭话嫌弃变体、普通礼物 +1 好感失效、高脏污随机事件（野狗循味/招蝇）——只做氛围，无硬数值惩罚**。
 - **季节与寒冷（M15）**：季节按游戏日分三档（秋/初冬 day≥140/深冬 day≥170），`G.engine.seasonTierNow()`→0/1/2、`seasonNow()`→字符串、`isWinter()`→bool，缓存于 `world.season`。`cold` 仅冬季室外累积（`TUNE.coldOutPer10[档] - 全身 warmth×TUNE.warmthRelief`，寒潮 `world.coldSnap` 期间加 `coldSnapSurge`），室内/生火/煮水消退。全部常量在 `time.js TUNE`。cond DSL 新增 `season:'winter'|'earlywinter'|'deepwinter'|'autumn'` 门（`winter`=初冬+深冬）。
+- **家园升级（M17）**：home 新增 4 个一次性 `type:'repair'` 数据行动（`G.engine.homeRepair`），消耗材料写 `world.homeUpg[door|rain|garden|storage]=true`。door：尸潮夜 home 走安心变体事件 + 在家睡眠精力恢复 ×`1+TUNE.homeSleepDoorBonus`；rain：雨天跨日结算自动产 `TUNE.homeRainYield` 份 `rainwater`（`world._rainedToday` 逐步标记，绕开 `world.rainDay` 20:00 先清空的时序问题）；garden：每 `TUNE.gardenIntervalDays` 天产 `TUNE.gardenYield` 份 `wildveggie`（记最近收获日 `world.gardenDay`）；storage：解锁 `homeStorage` 存取 UI。被动产出统一走 `G.engine.homeAutoStore(id,n)`（有柜且未满进柜，否则进背包）。cond DSL 新增 `homeUpg:{door|rain|garden|storage: bool}` 门。仓储接口：`homeStorageCount/Add/Remove/Weight/Cap/Deposit/Withdraw`。
+- **NPC 同行作战（M18）**：`world.companion={id,until}` 记录当前同行者（`until`=当日 24:00 的 absMinute），唯一事实源。战斗型 NPC 在 `npcs.js` 带 `companion` 字段：`{role:'melee'|'gun'|'scout', hp?, dmg?[min,max], hit?, scout?, fleeBonus?, encMod?, joinLine, lines[]}`。三人：qin 近战（hp50/[7,12]/0.82）、dou 持枪（hp38/[6,11]/0.68，弹药自带）、mao 侦察（不参战，逃跑 +0.15、随机遇敌几率 -0.30）。引擎接口全在 state.js（`companionState/Active/Id`）+ npcs.js（`companionInvite(id,payment,itemId)` payment∈'aff'好感-3/'treat'消耗一份 `isTreatItem`；`companionEnd(reason)` reason∈dismiss/home/expire/retreat好感-2/defeat；`companionCombatUnit()` 战斗型返单位否则 null；`companionScoutActive/FleeBonus/EncMod`；`companionOnArrive(loc)`；`companionMidnight()`）。战斗：`combat.allies[]` 我方单位，玩家行动后 `allyTurn()` 打 firstAlive，敌人每回合 50/50 分配目标（打同伴无护甲/防御减免），同伴 hp≤30% maxHp 自动撤出（不死，清 companion + 好感-2）。结束触发：回 home（goLocation 钩 `companionOnArrive`）/ 当日 24:00（dayRollover 钩 `companionMidnight`）/ 主动解散（关系面板按钮）。同行期该 NPC 的 `scheduled` 事件（按 `ev.npc` 匹配）不触发；同行时 `carryCap +10`。cond DSL 新增 `companion:true|false|"npcId"` 门。氛围事件 `companion_chat`（random，chance .15/cd 240，cond `companion:true`）低频播一句同伴对话。
+
+- **屠夫帮收网战役（M19，`js/data/story/campaign.js`）**：qin 复仇线三幕收网。入口门槛 qin stage4+`npc.qin.s4_1`+day≥110。flag 链（均 `npc.qin.*`）：`campClueMao/campClueZhou/campClueFang`（三情报碎片）→ `campReady`（集齐，文本副作用落旗）→ `campDepot`（端掉码头据点，`campRetreat` 为显式撤退旗）→ 日历 `camp3_ambush` 强制触发决战 → 处置旗 `mengDead`|`mengSpared` + **`world.butcherFallen`**（世界线总旗，M20 动态经济读它；butcher_world_1~4 加 `butcherFallen:false` 门停用，camp_after_1~4 变体接棒，`qin_hunt` 被 campaign.js 覆盖注册加同门、`qin_hunt2` 清残党循环接棒）。新敌人 `thug_boss`（孟九，hp80/dmg[10,18]/human）+ 编组 `thug_boss_pack`。**战役战斗回调**：campaign.js 包装 `G.engine.startCombat`——`opts.returnPassage` 命中战役段落 id 时改挂 onWin/onFlee/onLose（胜=原 goto、逃=撤退段、败=campaignDefeat 被俘非死亡：镜像 humanDefeat + 醒在码头货舱 + `world.campLastLoss` 记败于哪一幕），其余战斗透传，引擎未动。战役两幕均强制 qin 同行（直接写 `world.companion`，复用 M18 机制）。
 
 ## 条件 DSL（cond）
 
@@ -64,6 +74,8 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
 { loc:"bar", timeRange:[1200,1560],        // 分钟，支持跨午夜
   weekday:2, dayMin:95, chance:0.3,
   season:"winter",                          // M15 季节门（winter=初冬+深冬 / earlywinter / deepwinter / autumn）
+  homeUpg:{ door:true },                    // M17 家园升级门，{door|rain|garden|storage: bool}，多项 AND
+  companion:true,                           // M18 同行门：true=有同伴 / false=无 / "qin"=指定同伴
   stat:{ sanity:{lt:20}, alcohol:{gte:60}, cold:{gt:0} },
   aff:{ qin:{gte:40} }, stage:{ qin:{gte:2} },
   flag:{ "qin_s1_1":true, "world.butcher_raid":false },   // 无前缀查 player.flags，npc 标记写 "npc.qin.xxx"

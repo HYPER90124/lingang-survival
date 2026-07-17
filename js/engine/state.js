@@ -54,7 +54,8 @@
         location: 'home',
         stats: { hp: 100, hunger: 70, thirst: 70, energy: 80,
                  sanity: 80, alcohol: 0, addiction: 0, infection: 0,
-                 cold: 0 },   // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
+                 cold: 0,     // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
+                 grime: 0 },  // M16：脏污值（0–100），搜刮/战斗/下水道累积，洗漱清零
         bullets: 20,
         weapon: null,                 // {id, durability}
         outfit: initialOutfit(gender),// M14：三槽服装 {top,bottom,shoes}，每槽 {id,dur}|null
@@ -63,9 +64,17 @@
         flags: {}
       },
       npcs: npcs,
-      world: { flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn' }, // _firedDay: scheduled 每日去重；season: M15 季节缓存
+      world: {
+        flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn', // _firedDay: scheduled 每日去重；season: M15 季节缓存
+        codex: { enemies: {} },                                     // M16：已见敌人图鉴 {enemyId: true}
+        stats: { kills: {}, scavenges: 0, fights: 0, flees: 0 },    // M16：生存统计
+        homeUpg: { door: false, rain: false, garden: false, storage: false }, // M17：家园四项升级
+        gardenDay: null,                                             // M17：小菜园最近收获日（未建为 null）
+        companion: null                                              // M18：当前同行 NPC {id, until}（absMinute 截止），无则 null
+      },
       calendar: { appointments: [], milestones: [] },
-      scavenge: {}
+      scavenge: {},
+      homeStorage: []   // M17：家园储物柜，{id,count}，不计负重（需先修「打造储物柜」解锁 UI）
     };
   }
   G.engine.newGame = newGame;
@@ -92,6 +101,33 @@
   G.engine.statGet = statGet;
   G.engine.statSet = statSet;
   G.engine.statAdd = statAdd;
+
+  // ---- M16 图鉴 / 生存统计埋点（纯数据写入，供 combat/scavenge 调用，不改战斗流程） ----
+  function worldCodex() {
+    var w = S().world;
+    if (!w.codex) w.codex = { enemies: {} };
+    if (!w.codex.enemies) w.codex.enemies = {};
+    return w.codex;
+  }
+  function worldStats() {
+    var w = S().world;
+    if (!w.stats) w.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (!w.stats.kills) w.stats.kills = {};
+    return w.stats;
+  }
+  // 登记已见敌人（startCombat 埋点）
+  function codexSee(id) { if (id) worldCodex().enemies[id] = true; }
+  // 生存统计计数：kind ∈ 'kills'(需 id)|'scavenges'|'fights'|'flees'
+  function statTick(kind, id) {
+    var st = worldStats();
+    if (kind === 'kills') { if (id) st.kills[id] = (st.kills[id] || 0) + 1; return; }
+    if (typeof st[kind] !== 'number') st[kind] = 0;
+    st[kind] += 1;
+  }
+  G.engine.codexSee = codexSee;
+  G.engine.statTick = statTick;
+  G.engine.worldStats = worldStats;
+  G.engine.worldCodex = worldCodex;
 
   // ---- 标记路径解析 -------------------------------------------------------
   // 返回 {obj, key}，getFlag/setFlag 共用
@@ -198,6 +234,7 @@
     var p = S().player, cap = CARRY_BASE;
     if (p.skills.packmule) cap += 10;      // 预留：负重技能（数据层定义）
     if (p.flags.carryBonus) cap += p.flags.carryBonus;
+    if (companionActive()) cap += 10;      // M18：同行者帮拿，负重上限 +10
     return cap;
   }
   function isOverweight() { return invWeight() > carryCap(); }
@@ -209,6 +246,92 @@
   G.engine.invWeight = invWeight;
   G.engine.carryCap = carryCap;
   G.engine.isOverweight = isOverweight;
+
+  // ---- 家园仓储（M17） ------------------------------------------------------
+  // homeStorage 结构与 player.inventory 同构（{id,count}）；只收纳无独立耐久的物资
+  // （武器/服装类拒收，避免装备语义复杂化），寄存物不计入 invWeight/carryCap。
+  // 容量上限走 TUNE.homeStorageCap（重量），由「打造储物柜」升级解锁 UI 后才可用。
+  function homeStorageList() { return S().homeStorage || (S().homeStorage = []); }
+  function homeStorageEntry(id) {
+    var st = homeStorageList();
+    for (var i = 0; i < st.length; i++) if (st[i].id === id) return st[i];
+    return null;
+  }
+  function homeStorageCount(id) { var e = homeStorageEntry(id); return e ? e.count : 0; }
+  function homeStorageAdd(id, n) {
+    n = (n == null) ? 1 : n;
+    if (n <= 0) return;
+    var e = homeStorageEntry(id);
+    if (e) e.count += n; else homeStorageList().push({ id: id, count: n });
+  }
+  function homeStorageRemove(id, n) {
+    n = (n == null) ? 1 : n;
+    if (n <= 0) return;
+    var st = homeStorageList();
+    var e = homeStorageEntry(id);
+    if (!e) return;
+    e.count -= n;
+    if (e.count <= 0) { var idx = st.indexOf(e); if (idx >= 0) st.splice(idx, 1); }
+  }
+  function homeStorageWeight() {
+    var st = homeStorageList(), total = 0;
+    for (var i = 0; i < st.length; i++) {
+      var def = itemDef(st[i].id);
+      total += (def ? (def.weight || 0) : 0) * st[i].count;
+    }
+    return total;
+  }
+  function homeStorageCap() { return (G.TUNE && G.TUNE.homeStorageCap != null) ? G.TUNE.homeStorageCap : 60; }
+  // 存入：背包→柜（武器/服装拒收；超容拒绝，返回 msg 供 UI toast）
+  function homeStorageDeposit(id, n) {
+    n = (n == null) ? 1 : n;
+    var def = itemDef(id);
+    if (def && (def.type === 'weapon' || def.type === 'clothing')) return { ok: false, msg: '武器和服装存不进储物柜。' };
+    if (countItem(id) < n) return { ok: false, msg: '背包里没有这么多。' };
+    var addWeight = (def ? (def.weight || 0) : 0) * n;
+    if (homeStorageWeight() + addWeight > homeStorageCap()) return { ok: false, msg: '储物柜装不下了。' };
+    removeItem(id, n);
+    homeStorageAdd(id, n);
+    return { ok: true };
+  }
+  // 取出：柜→背包（不受负重上限阻拦，超重后照 isOverweight 既有规则处理）
+  function homeStorageWithdraw(id, n) {
+    n = (n == null) ? 1 : n;
+    if (homeStorageCount(id) < n) return { ok: false, msg: '储物柜里没有这么多。' };
+    homeStorageRemove(id, n);
+    addItem(id, n);
+    return { ok: true };
+  }
+  // 被动产出（雨水收集器/小菜园）优先入柜，未建储物柜或已满则直接进背包（超重照常规规则处理）
+  function homeAutoStore(id, n) {
+    var w = S().world;
+    if (w && w.homeUpg && w.homeUpg.storage) {
+      var def = itemDef(id);
+      var addWeight = (def ? (def.weight || 0) : 0) * n;
+      if (homeStorageWeight() + addWeight <= homeStorageCap()) { homeStorageAdd(id, n); return 'storage'; }
+    }
+    addItem(id, n);
+    return 'bag';
+  }
+  G.engine.homeStorageCount = homeStorageCount;
+  G.engine.homeStorageAdd = homeStorageAdd;
+  G.engine.homeStorageRemove = homeStorageRemove;
+  G.engine.homeStorageWeight = homeStorageWeight;
+  G.engine.homeStorageCap = homeStorageCap;
+  G.engine.homeStorageDeposit = homeStorageDeposit;
+  G.engine.homeStorageWithdraw = homeStorageWithdraw;
+  G.engine.homeAutoStore = homeAutoStore;
+
+  // ---- 同行（M18） --------------------------------------------------------
+  // world.companion = {id, until}（until 为 absMinute 截止时刻，当日 24:00）。
+  // 这里只放「状态模型」读取；邀请/解散/战斗单位构建等逻辑在 npcs.js / combat.js，
+  // 便于 M19 战役按 id 复用（world.companion 是唯一事实源）。
+  function companionState() { var w = S() && S().world; return (w && w.companion) || null; }
+  function companionActive() { return !!companionState(); }
+  function companionId() { var c = companionState(); return c ? c.id : null; }
+  G.engine.companionState = companionState;
+  G.engine.companionActive = companionActive;
+  G.engine.companionId = companionId;
 
   // ---- 服装（M14） --------------------------------------------------------
   // 开局按性别发一套垫底基础装（worn 系列）。老档迁移走 save.js DEFAULT_OUTFIT。
@@ -364,6 +487,18 @@
       var mn = s.npcs[cond.met]; if (!mn || !mn.met) return false;
     }
     if ('decency' in cond && !cmp(outfitDecency(), cond.decency)) return false;  // M14：着装体面合计
+    if ('homeUpg' in cond) {                                        // M17：家园升级门 {door|rain|garden|storage: bool}
+      var hu = s.world.homeUpg || {};
+      for (var hk in cond.homeUpg) {
+        if (!!cond.homeUpg[hk] !== !!hu[hk]) return false;
+      }
+    }
+    if ('companion' in cond) {                                      // M18：是否有同行者（true/false，或指定 id）
+      var comp = s.world && s.world.companion;
+      if (cond.companion === true && !comp) return false;
+      if (cond.companion === false && comp) return false;
+      if (typeof cond.companion === 'string' && (!comp || comp.id !== cond.companion)) return false;
+    }
 
     // chance 放最后：只有其余条件全过才掷骰，避免浪费判定
     if ('chance' in cond && Math.random() >= cond.chance) return false;

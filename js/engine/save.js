@@ -20,8 +20,9 @@
   window.G = window.G || {};
   G.engine = G.engine || {};
 
-  G.SAVE_VERSION = 3;   // M14：player.outfit（服装三槽）；M15：player.stats.cold（寒冷值）
+  G.SAVE_VERSION = 6;   // M14：player.outfit；M15：player.stats.cold；M16：world.codex/world.stats + player.stats.grime；M17：world.homeUpg/gardenDay + homeStorage；M18：world.companion
   var PREFIX = 'lgys_save_';
+  var LEGACY_KEY = 'lgys_save';   // M16：M9 之前可能存在的无槽位后缀单档键（一次性迁入槽 1）
   var SLOTS = [1, 2, 3, 'auto'];
 
   function key(slot) { return PREFIX + slot; }
@@ -58,6 +59,9 @@
       switch (v) {
         case 1: migrateV1toV2(data); break;   // 无 outfit → 发默认初始装
         case 2: migrateV2toV3(data); break;   // 无 cold → 补 0（老档进冬季正常生效）
+        case 3: migrateV3toV4(data); break;   // 无 codex/stats/grime → 补空容器
+        case 4: migrateV4toV5(data); break;   // 无 homeUpg/gardenDay/homeStorage → 补默认
+        case 5: migrateV5toV6(data); break;   // 无 companion → 补 null（老档没有同行者）
       }
       v++;
     }
@@ -74,6 +78,25 @@
   function migrateV2toV3(d) {
     var p = d.player; if (!p || !p.stats) return;
     if (p.stats.cold == null) p.stats.cold = 0;
+  }
+  // v3→v4：老档无图鉴/统计/脏污字段，补空容器（M16 四合一：codex/stats/grime）。
+  function migrateV3toV4(d) {
+    d.world = d.world || {};
+    if (!d.world.codex) d.world.codex = { enemies: {} };
+    if (!d.world.stats) d.world.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (d.player && d.player.stats && d.player.stats.grime == null) d.player.stats.grime = 0;
+  }
+  // v4→v5：老档无家园升级/仓储字段，补默认（未修任何升级，柜子空的）。
+  function migrateV4toV5(d) {
+    d.world = d.world || {};
+    if (!d.world.homeUpg) d.world.homeUpg = { door: false, rain: false, garden: false, storage: false };
+    if (d.world.gardenDay === undefined) d.world.gardenDay = null;
+    if (!d.homeStorage) d.homeStorage = [];
+  }
+  // v5→v6：老档无同行字段，补 null（同行是易失场景外的持久态，但老档必然无人同行）。
+  function migrateV5toV6(d) {
+    d.world = d.world || {};
+    if (d.world.companion === undefined) d.world.companion = null;
   }
   function defaultOutfit(gender) {
     if (G.engine.initialOutfit) return G.engine.initialOutfit(gender);
@@ -96,7 +119,36 @@
     d.npcs = d.npcs || {};
     if (d.player && !d.player.outfit) d.player.outfit = defaultOutfit(d.player.gender);
     if (d.player && d.player.stats && d.player.stats.cold == null) d.player.stats.cold = 0;
+    // M16：图鉴/统计/脏污容器兜底（手工档/极端空档）
+    if (!d.world.codex) d.world.codex = { enemies: {} };
+    if (!d.world.codex.enemies) d.world.codex.enemies = {};
+    if (!d.world.stats) d.world.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (!d.world.stats.kills) d.world.stats.kills = {};
+    if (d.player && d.player.stats && d.player.stats.grime == null) d.player.stats.grime = 0;
+    // M17：家园升级/仓储容器兜底
+    if (!d.world.homeUpg) d.world.homeUpg = { door: false, rain: false, garden: false, storage: false };
+    if (d.world.gardenDay === undefined) d.world.gardenDay = null;
+    if (!d.homeStorage) d.homeStorage = [];
+    // M18：同行容器兜底（手工档/极端空档）；undefined→null（无同行）
+    if (d.world.companion === undefined) d.world.companion = null;
     return d;
+  }
+
+  // ---- 旧键迁移（M16：M9 之前若用过无后缀单档键 lgys_save，一次性迁入槽 1） ----
+  // 幂等：仅当槽 1 为空且旧键存在时执行；保留旧键做回退（不删除），确认新档可读后自然废弃。
+  var legacyMigrated = false;
+  function migrateLegacyKey() {
+    if (legacyMigrated) return;
+    legacyMigrated = true;
+    var ls = LS(); if (!ls) return;
+    try {
+      var raw = ls.getItem(LEGACY_KEY);
+      if (!raw) return;
+      if (ls.getItem(key(1))) return;          // 槽 1 已有档，不覆盖
+      JSON.parse(raw);                          // 校验是合法 JSON 再迁
+      ls.setItem(key(1), raw);                  // 迁入槽 1（旧键保留做回退）
+      console.info('[save] 旧存档已迁入槽位 1（原键保留）');
+    } catch (e) { console.warn('[save] 旧存档迁移跳过:', e); }
   }
 
   // ---- 存 / 读 ------------------------------------------------------------
@@ -110,6 +162,7 @@
   function autoSave() { return save('auto'); }
 
   function load(slot) {
+    migrateLegacyKey();
     var ls = LS(); if (!ls) return false;
     var raw = ls.getItem(key(slot));
     if (!raw) { console.warn('[save] 空槽位:', slot); return false; }
@@ -142,6 +195,7 @@
   }
 
   function listSaves() {
+    migrateLegacyKey();
     var ls = LS(), out = {};
     SLOTS.forEach(function (slot) {
       var raw = ls && ls.getItem(key(slot));

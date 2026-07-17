@@ -75,8 +75,22 @@
     if (cd && G.engine.absMinute() < cd) return false;
     // scheduled 每日只触发一次
     if (ev.type === 'scheduled' && s.world._firedDay[ev.id] === s.player.day) return false;
+    // M18：同伴外出期间，该 NPC 自己的 scheduled 事件（巡逻夜/义诊日等）不触发——人不在岗位上
+    if (ev.type === 'scheduled' && ev.npc && G.engine.companionId && G.engine.companionId() === ev.npc) return false;
     if (!G.engine.checkCond(ev.cond)) return false;
+    // M18：侦察位（灰猫）同行时，随机遇敌事件额外按 encMod 概率被绕开
+    if (ev.type === 'random' && G.engine.companionScoutActive && G.engine.companionScoutActive()
+        && eventLeadsToCombat(ev) && Math.random() < G.engine.companionEncMod()) return false;
     return true;
+  }
+
+  // 事件是否会引向战斗（其 passage 的任一选项 fx.combat）；结果缓存于事件对象（静态）。
+  function eventLeadsToCombat(ev) {
+    if (ev._leadsCombat != null) return ev._leadsCombat;
+    var lead = false, p = ev.passage && storyMap[ev.passage];
+    if (p && p.choices) lead = p.choices.some(function (c) { return c.fx && c.fx.combat; });
+    ev._leadsCombat = lead;
+    return lead;
   }
 
   function fireEvent(ev) {
@@ -204,6 +218,8 @@
   // ---- 进入地点 -----------------------------------------------------------
   function goLocation(locId) {
     S().player.location = locId;
+    // M18：回据点自动与同伴道别（在跑 enter 事件之前结束同行）
+    if (G.engine.companionOnArrive) G.engine.companionOnArrive(locId);
     var ev = checkEvents('enter');
     if (!ev && G.ui.showLocation) G.ui.showLocation();
     return ev;

@@ -36,10 +36,10 @@
 | M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ✅ 完成 |
 | M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ✅ 完成 |
 | M15 | 入冬季节压力（温度/寒冷值/水源联动） | opus | ✅ 完成 |
-| M16 | QoL 杂项（收音机/图鉴统计/多存档槽/清洁度） | opus | ⬜ 已拍板，待开工 |
-| M17 | 家园升级（门窗/雨水收集/菜园/储物柜） | sonnet | ⬜ 已拍板，待开工 |
-| M18 | NPC 同行作战 | opus | ⬜ 已拍板，待开工 |
-| M19 | 屠夫帮收网战役（三幕+孟九+战后世界变体） | fable | ⬜ 已拍板，待开工 |
+| M16 | QoL 杂项（收音机/图鉴统计/多存档槽/清洁度） | opus | ✅ 完成 |
+| M17 | 家园升级（门窗/雨水收集/菜园/储物柜） | sonnet | ✅ 完成 |
+| M18 | NPC 同行作战 | opus | ✅ 完成 |
+| M19 | 屠夫帮收网战役（三幕+孟九+战后世界变体） | fable | ✅ 完成 |
 | M20 | 动态经济（物价波动/缺货/套利） | sonnet | ⬜ 已拍板，待开工 |
 | M21 | 主角前情揭示链（worn_idcard 收口） | fable | ⬜ 已拍板，待开工 |
 | M22 | 怀孕系统 | fable | ⬜ 已拍板，待开工 |
@@ -51,6 +51,76 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M19（2026-07-17, fable）
+屠夫帮收网战役实装。改动：`js/data/story/campaign.js`（**新文件**，33 段落 + 13 事件 + startCombat 包装 + campaignDefeat 被俘流程）、`enemies.js`（追加 `thug_boss` 孟九 hp80/dmg[10,18]/human/专属 descPool×4 + 编组 `thug_boss_pack`=[thug_boss,thug_grunt]）、`worldevents.js`（butcher_world_1~4 的 cond 各加 `flag:{'world.butcherFallen':false}`，倒台后停用——任务书明确指定的既有文件改动，其余未动）、`index.html`+`tools/build.js`（campaign.js 引入，两处都加了——M13 坑已避）、`docs/Schema.md`（M19 机制段+flag 链登记）、`docs/NPC设定.md`（qin 羁绊线 M19 登记 + 搭档定名「老周」补登记）。`dist/game.html` 重打（668.6KB，**26 脚本**）。存档结构未动（全部旗走既有 storyFlags/world.flags，SAVE_VERSION 仍 6）。
+
+**全事件 id 与 flag 链**（旗均 `npc.qin.*`，除注明 world）：入口门槛统一 qin stage4 + `s4_1` + **dayMin 110**（任务书「day≥20」按开局 day90 起第 20 天解读）。
+- **第一幕**（不 once，flag 锁序 + cd 1440，可拒绝重谈）：`camp_clue_mao`（talk @sewer，mao stage≥2，付 10 子弹或 aff≥60 免费）→`campClueMao`；`camp_clue_zhou`（enter/talk @campus 周三 19–23，需 `npc.zhou.s2_1`，pri 6 盖过同窗口的 zhou_radio_1 pri4）→`campClueZhou`；`camp_clue_fang`（talk @checkpoint，需 `npc.fang.s1_1`）→`campClueFang`。三旗齐 → `campReady`（`checkClues()` 文本副作用落旗，幂等，M5 met 联动写法）+ 无 eventId 碰头备忘一条。
+- **第二幕** `camp_depot`（enter/action @dock 19:30–03:00，campReady+campDepot:false，pri 9，**cd 4320=「三日后可再来」的实现**，撤退/胜利皆烧此冷却）：入场段 `camp2_p1` 文本副作用 `forceQin()` 强制同行（直接写 `world.companion`，已有他人同行先无罚 dismiss；companionInvite 的在场/好感/付费门对强制剧情不适用，故不走它）。潜入=判定链（melee 摸哨 75% / 手电打灰猫暗号 70%，失败落 `camp2_alarm_p` 惊动）→ 终战 thug_patrol；强攻=thug_squad 连战两场（`camp2_a1_p` 中场可「见好就收」显式撤退=M6 败分支，写 `campRetreat`，再访 camp2_p1 有加岗变体文案）。胜利 `camp2_win_p`：+20 子弹+军急救+零件×2，写 `campDepot` 清 `campRetreat`，续接段 `camp2_after_p` 副作用 `bookBoss()`（guard `campBossBooked`）登记 **2–4 日后 21:00 `camp3_ambush`** 日历。
+- **第三幕** `camp3_ambush`（**when:[] 只受 appointment eventId 强制触发**，同 lin_promise_1）：`camp3_p1` 在场（checkpoint）=对峙就位+forceQin，不在场=错过文案+「递话再堵」choice 重登日历（inDays 2，可无限重试）。对峙 `camp3_p2` 按 `rescueLate`/`sawCargo` 旧旗出变体，可追问搭档之死（`camp3_p2b`，孟九口径与 qin_s1_2 对齐）。战斗 `thug_boss_pack`。胜利 `camp3_win_p` 处置二选一：交老秦了断 →`mengDead`+aff qin+8+sanity-3；逼问内情放走 →`mengSpared`+aff qin-3（好感分化），**均写 `world.butcherFallen`（M20 动态经济读这面旗）**。逃跑=孟九突围 `camp3_flee_p`，choice 重登日历。
+- **战败**（战役全程 M13-A 非死亡）：campaign.js **包装 `G.engine.startCombat`**——`opts.returnPassage` 命中 `camp2_a1_p/camp2_win_p/camp3_win_p` 时改挂 onWin/onFlee/onLose 三回调（胜=原段落，逃=撤退段，败=`campaignDefeat()`），其余战斗透传，引擎文件零改动。campaignDefeat 镜像 humanDefeat（子弹减半/物资对半/hp15/理智-10/thugDefeats++/昏迷180分/同伴打散），醒来段 `camp_defeat_p1` **自写被俘变体**（醒在码头货舱，副作用把 location 挪到 dock，qin 来捞人），`world.campLastLoss`='depot'|'boss' 分支出口（boss 败出口自带重登日历）。
+- **战后世界**：aftermath 变体 `camp_after_1`（权力真空散兵，residential/market，可打 thug_patrol）/`camp_after_2`（码头易主）/`camp_after_3`（商户口风，market/mall）/`camp_after_4`（残党偶遇，按 mengDead/mengSpared 出变体，可打）；`camp_talk_fang/zhao/su` 三条一次性搭话变体（once，pri 3，met 门）；**`qin_hunt` 由 campaign.js 覆盖注册**（events.register 按 id 替换，qin.js 文件未动）加 `butcherFallen:false` 门，`qin_hunt2`「清理残党」循环接棒（同触发窗，cd 4320，+6 子弹，文案按 mengDead/mengSpared 分化，不再「又近了一步」）。
+
+**thug_boss 数值**：hp 80 / dmg [10,18] / speed 3 / human / 掉落子弹 10–15（100%）+军急救 50%。平衡自测（scratchpad `m19_balance.js` 蒙特卡洛 2000 次/组，M18 同口径机器人〔铁管/胜任策略/不逃〕+ 中期档 spikebat 对照，带军急救×1）：**战役实际体验是「qin 强制同行」列**——spikebat 档潜入终战 100% / 强攻连战 68.7% / 决战 95.5%（铁管档 100%/39.2%/76.1%），潜入路线是低配活路，强攻/决战有张力且未被同伴打成白给；单人列（决战 spikebat 21.3%）仅作「同伴明显有用」的量化（+70pp 级），战役内无单人场景。战败非死亡可无限重试，难度不形成卡死。
+
+**测试（scratchpad `m19_test.js` 199 项 + `m19_integrity.js` 全库回归，全绿 0 抛错）**：注册完整性（33 段落/13 事件/thug_boss/编组/butcher_world 四门/qin_hunt 覆盖）、fx 引用扫描、双性别×4 旗位组合渲染、第一幕门槛（day/stage/s4_1 三拒绝 + 碎片落旗 + 集齐 campReady + 备忘幂等 + 灰猫付费/免费选项门）、第二幕（夜窗/白天拒绝/campDepot 关闭/强制同行/顶掉 dou 无罚/撤离解散/campRetreat 落旗+再访变体）、包装三回调（挂载/returnPassage 接管/qin 入阵 hp50/普通战斗透传）、战败全链（非死亡/子弹减半/物资对半/hp15/理智/同伴散/计数/醒来段/损失清单/移位 dock/双出口 cond）、据点收尾（缴获/落旗/清旗/好感/里程碑/日历 2–4 日/幂等）、appointment 强制触发+在场/不在场分支+递话重登、对峙变体、处置双结局旗与好感分化、突围/被俘重登、战后互斥翻转（butcher_world 关↔camp_after 开）、qin_hunt 换代四态、qin_hunt2 全流程、导出导入往返（战役旗+日历全保留）。全库 268 事件/507 可达段落/796 fx 引用 0 断链。
+
+**已知取舍 / 留给 M23**：① `camp_depot` 的「三日后可再来」用事件 cd 4320 统一实现——首访「先撤」不动手也烧三天冷却（文案已圆：惊动前多看一眼也算露头），非任务书原文的「仅败退三日」，判定从简合理；② 第三幕若玩家恰在约定时刻睡觉/赶路，appointment 会在整点 tick 照常结算并按「不在场」分支处理（M13 邀约同边角）；③ 强制同行用直写 `world.companion` 而非 companionInvite（后者有在场/好感门与付费扣减，不适用剧情强制），同行仍受 M18 全套规则（24:00 到期/回 home 散伙/战内撤退）约束——战役夜跨 24:00 时同伴可能中途到期道别，战斗内单位不受影响，判定可接受；④ `camp_clue_zhou` 与 `zhou_radio_1`/`zhou_radio_remote` 同窗口靠 priority 6>4 抢占一周，广播留言顺延下周，非死锁；⑤ qin_hunt 覆盖注册会在控制台打一行「事件 id 重复覆盖」warn（story 段落 register 的提示，事件替换本身是引擎支持行为），无功能影响；⑥ 潜入判定链失败仅落强攻/撤退，无「潜入被俘」专属文案（被俘统一走战败流程），体量取舍。
+
+### M18（2026-07-17, opus）
+NPC 同行作战实装。改动：`state.js`（newGame 加 `world.companion:null` + 状态模型 `companionState/Active/Id` + `carryCap()` 同行时 +10 + checkCond 新增 `companion` 门）、`save.js`（**SAVE_VERSION 5→6** + `migrateV5toV6` 补 companion + normalize 兜底）、`npcs.js`（qin/dou/mao 三人 `companion` 字段 + 邀请/解散/战斗单位/侦察加成全套 `G.engine.companion*` + 招待物判定 `isTreatItem` + 氛围事件 `companion_chat`/段落 `companion_chat_p` + 关系面板「邀请同行/解散同行」按钮 + 付费浮层 `openCompanionInvite`）、`combat.js`（`combat.allies[]` + `allyTurn()` + `enemyTurn` 50/50 分配目标 + `allyTakeHit` 30% 撤退 + `fleeChance` 加侦察逃跑加成 + `humanDefeat` 同伴打散记 `_defeatCompanion`）、`events.js`（`goLocation` 到 home 钩 `companionOnArrive` + `eligible()` 同行 NPC 的 scheduled 事件抑制 + 侦察位遇敌 `encMod` 抑制 + `eventLeadsToCombat` 缓存判定）、`time.js`（`dayRollover` 钩 `companionMidnight` 当日 24:00 散伙）、`render.js`（战斗界面加我方同伴血条行 `ally-row`）、`style.css`（`.ally-row`/`.ally-card`/`.hp-fill.ally` 绿条）、`dol.js`（`dol_defeat_p1` 战败时补一句同伴被冲散的文案）、`docs/Schema.md`（companion 字段/SAVE_VERSION6/cond companion/M18 机制段登记）。`dist/game.html` 重打（632.7KB，**25 脚本**，未新增数据文件——companion 逻辑复用 state/combat/npcs 现有文件）。
+
+**companion 字段 Schema**（`npcs.js` 三人，M19 战役按 id 复用同一机制）：`{role, hp?, dmg?[min,max], hit?, scout?, fleeBonus?, encMod?, joinLine, lines[4-6]}`。三人数值：**qin 近战 hp50/dmg[7,12]/hit0.82**；**dou 持枪 hp38/dmg[6,11]/hit0.68**（弹药自带不计）；**mao 侦察不参战**，逃跑成功率 +0.15、随机遇敌几率 -0.30。战斗内 hp 为临时值（进场满血，`companionCombatUnit()` 每次开战重建）。
+
+**AI / 撤退 / 目标分配规则**：同伴在**玩家行动之后**自动攻击最靠前存活敌人（`firstAlive`，命中掷 `hit`，伤害 `rand(dmg)`，无连击/无武器耐久）；敌方每回合对**每个敌人**掷 50/50 决定打玩家还是随机一名存活同伴（打同伴走裸伤，不吃玩家护甲/防御减免、不传染、不损衣）；同伴 hp 跌破 `maxHp×30%` **自动撤出**（不死——剧情 NPC 不能死在随机战里），撤出即清 `world.companion` + 好感 -2，本场不再回来。侦察位（mao）不入 `allies`，只提供逃跑加成（进 `fleeChance` → `combatOptionInfo` 显示同步）与遇敌抑制。
+
+**邀请 / 结束**：关系面板对战斗型 NPC（aff≥60 且在场）出「邀请同行」→ 付费浮层二选一：欠人情（**好感-3**）或请客（消耗一份 `isTreatItem`：food 或 liquor/beer/herbaltea）。一次最多 1 人；作息时段外/不在场不可邀（复用 `npcPresent`，故 lin 值班不做同行）。结束三途径：**回 home**（`goLocation`→`companionOnArrive` 自动道别，无罚）、**当日 24:00**（`dayRollover`→`companionMidnight`，无罚）、**主动解散**（面板按钮，无罚）；被打退=撤退（好感-2）；人类战败=同伴一并被打散（`dol_defeat_p1` 补文案，无额外好感罚，走 M13-A 非死亡；丧尸战败仍死亡）。同行期间该 NPC 的 `scheduled` 事件（`qin_patrol_1`/`mao_week_1` 等按 `ev.npc` 匹配）不触发；同行时 `carryCap +10`。
+
+**机器人胜率对比数据（scratchpad `m18_test.js`，未入库；铁管 rustpipe + 胜任策略[残敌重击/低血包扎/危急防御]，2000 次/组，M19 可直接引用）**：
+- **2 人中级编组（任务书「参考 +20~30pp」的对标档，红线守住）**：跛行者×2 单人 81%→老秦/阿豆 100%（**+19**）；犬尸×3 单人 68%→100%/99%（**+32**）；奔跑者×2 单人 75%→100%（**+24**）；肿胀者单人 91%→100%（+9）；爬行者×2 单人已 100%（+0，无头room）。
+- **3 人尸潮编组**：尖啸+跛×2 单人 7%→老秦 96%/阿豆 83%；跛×2+奔跑者 单人 1%→84%/58%；奔+爬+跛 单人 17%→98%/90%。**这些 +70~90 的大摆幅是「无逃跑纯站桩」机器人基线塌陷所致**（3 敌尸潮下铁管硬拼本就该逃而非站赢），非同伴数值破线——同伴的价值正是「把只能逃的仗打成能赢」；对**人类编组**（杂兵×2/杂兵+打手）机器人单人已 100%，同伴 +0。qin 比 dou 明显更能扛 3 人局（肉盾定位），符合两人分工。
+- 结论：**zombie_pair 级未被打成「白给到零风险」**（单人本就 81%，同伴锁成 100% 属「强增益」而非救场），中级 2 人编组增量 +19~+32 落在任务书参考带内。
+
+**测试（`m18_test.js` 68 项逻辑单测全绿 0 抛错）**：新档字段/SAVE_VERSION6/v5→v6 迁移+空档 normalize、三人 companion 数据齐全（角色/对话池 4-6 条/非战斗 NPC 无字段）、邀请门槛（不在场/好感不足/成功扣好感/until=次日午夜/一次一人/carryCap+10）、请客支付（招待物判定/成功不扣好感/扣一份）、解散/撤退-2/回家自动散/去别处不散/午夜散、cond companion 门四态、战斗单位构建（qin出战/mao不出战）+侦察 fleeBonus/encMod、开战 allies 注入+正常结算、同伴受创撤退清 companion、人类战败清同伴+记名+非死亡、companion_chat 事件/段落注册+text 非空、事件 passage text 0 抛错、侦察逃跑加成进 combatOptionInfo、scheduled 归属判定、导出导入往返带 companion（含 until）。
+
+**已知取舍 / 留给 M23 收尾**：① 未做新文件——companion 全套逻辑复用 state/combat/npcs/events/time 现有文件（M19 战役 `campaign.js` 直接调 `G.engine.companionInvite/End/CombatUnit` 即可强制/复用同行）；② 侦察位遇敌抑制用 `eventLeadsToCombat`（扫 passage 选项有无 `fx.combat`，结果缓存 `ev._leadsCombat`）+ 30% 额外掷骰绕过，非改各遇敌事件 cond，localize 在 events.js `eligible()`；③ 「回 home 自动散伙」按任务书「回 home 主动解散」直译为到达即道别（另有面板手动解散覆盖别处场景）；④ 氛围对话 `companion_chat` 走 random 事件 priority1，多数时候被高优先级事件盖过，是低频彩蛋非保证每 240 分必出；⑤ 同伴撤退/打散只清当日同行，好感罚 -2（撤退）/0（战败，defeat 已够惩罚），未做「同伴负伤跨日状态」（进场满血是有意简化）；⑥ 战斗胜率机器人不逃跑，3 人尸潮单人基线偏低是策略粗糙非平衡问题（见上数据说明）。
+
+### M17（2026-07-17, sonnet）
+家园升级（门窗/雨水收集/菜园/储物柜）实装。改动：`state.js`（newGame 加 `world.homeUpg:{door,rain,garden,storage}` + `world.gardenDay` + 顶层 `homeStorage:[]`；checkCond 新增 `homeUpg:{key:bool}` 门；新增仓储接口 `homeStorageCount/Add/Remove/Weight/Cap/Deposit/Withdraw` + 被动产出落点 `homeAutoStore`）、`save.js`（**SAVE_VERSION 4→5** + `migrateV4toV5` 补 homeUpg/gardenDay/homeStorage + normalize 兜底）、`time.js`（TUNE 加 M17 常量段：`homeRainYield/gardenIntervalDays/gardenYield/homeStorageCap/homeSleepDoorBonus`；`advance()` 步进逐步标记 `world._rainedToday`——绕开 `world.rainDay` 20:00 先于跨日结算被清空的时序问题；`dayRollover()` 挂雨水/菜园被动产出；`sleep()` 读 `homeUpg.door` 给在家睡眠 +10% 精力恢复）、`locations.js`（home.actions 加 4 个一次性 `type:'repair'` 行动 + `G.engine.homeRepair` 引擎函数 + `locationDesc` 追加 `homeUpgSuffix`，仅 home 生效）、`worldevents.js`（新增 `horde_safe_door` 事件，home+门窗+尸潮夜时以更高优先级覆盖 `horde_safe_1`，理智从负变 +2）、`render.js`（`DATA_ACTION_FN` 加 `repair`；数据行动置灰逻辑扩展支持 `a.materials` 多材料缺口提示「（还差…）」；`extraActions` 支持 `a.onclick` 自定义处理）、`panels.js`（新增 `openHomeStorage` 储物柜存取面板，仿背包双列表，导出 `G.ui.panels.openHomeStorage`）、`docs/Schema.md`（SAVE_VERSION5/GameState 新字段/cond `homeUpg`/M17 机制段登记）。`dist/game.html` 重打（613.8KB，25 脚本，未新增数据文件）。
+
+**四项升级与材料**（`js/data/locations.js` home.actions，均 `type:'repair'`）：door 加固门窗（`scrapmetal×3+tape×2`，`toolkit` 在包不耗）；rain 雨水收集器（`glassbottle×3+rope×1+wire×1`）；garden 小菜园（`wildveggie×2+rainwater×2`）；storage 储物柜（`scrapmetal×2+rope×2`，`toolkit` 在包不耗）。四项材料全部来自中后期常见搜刮溢出物（scrapmetal/tape 见 residential/gas/dock；rope/wire/glassbottle 见 sewer/dock；toolkit 见 gas/dock 稀有档，一件可反复用于 door 与 storage 两项，不消耗）。修好后行动按 `cond:{homeUpg:{key:false}}` 自动从列表消失，不会重复显示。
+
+**被动产出与供给覆盖率**（scratchpad `m17_test.js` 蒙特卡洛 2 万天实测，未入库）：小菜园每 `TUNE.gardenIntervalDays`=2 天产 `TUNE.gardenYield`=1 份 wildveggie（hunger+10），折合每日均摊 **5.0 饥饿**，对比 `TUNE.hungerPer10`=0.35×144=50.4/天需求，覆盖率 **9.9%**；雨水收集器只在「当日下过雨」的跨日结算触发（`world._rainedToday` 标记），实测平均降雨频率 **≈27%/天**（`rain_start` chance0.12×7次晨检窗口、cooldown2880 的复合结果），产 `TUNE.homeRainYield`=2 份 rainwater（thirst+20），折合每日均摊 **10.8 口渴**，对比 `TUNE.thirstPer10`=0.40×144=57.6/天需求，覆盖率 **18.8%**。两项均远低于任务书「不得覆盖单人食水需求一半」的红线，「必须出门」未被破坏。
+
+**尸潮夜安心变体**：新事件 `horde_safe_door`（cond `{loc:'home', homeUpg:{door:true}, chance:0.5, flag:{hordeNight:true}}`，priority6）与既有 `horde_safe_1`（priority5，覆盖 home/bar/church）并存，事件调度按 priority 取高，门窗建成后 home 必然优先命中新变体，bar/church 及未修门窗的 home 仍走原文案。选择项理智从原本 -2~-3 改为 **+2**（任务书「理智 -0 改 +2」的实现，取单选项从简）。
+
+**在家睡眠加成**：`time.js sleep()` 判定 `player.location==='home' && world.homeUpg.door` 时精力恢复 ×(1+`TUNE.homeSleepDoorBonus`=0.10)；因「睡到天亮」本就只在 home 挂载（`render.js LOCATION_EXTRA_ACTIONS.home`），location 判断是防御性写法，非当前唯一门槛。hp 恢复不受影响（任务书未提及）。
+
+**储物柜**：`state.homeStorage:[{id,count}]`，独立于 `player.inventory`，不计入 `invWeight`/`carryCap`。容量上限 `TUNE.homeStorageCap`=60（重量），存取拒收 `weapon`/`clothing`（避免耐久条目脱离装备语义被"洗新"，纯材料/食水/杂物可存）。UI：home 的「整理储物柜」extraAction（`cond:{homeUpg:{storage:true}}` 门控）打开 `panels.js openHomeStorage`，柜内点取出、背包点存入，仿背包面板双列表。**M22 婴儿承载接口预留**：`G.engine.homeStorageDeposit/Withdraw(id,n)` 返回 `{ok,msg?}`，`homeStorageWeight()/homeStorageCap()` 供容量判定，`homeAutoStore(id,n)` 供其他模块的被动产出直接调用（有柜且未满进柜，否则进背包）。
+
+**测试（scratchpad `m17_test.js` 73 项 + `m17_smoke.js` 冒烟，未入库，全绿 0 抛错）**：新开局字段、v4→v5 迁移+空档 normalize、导出导入往返（含 homeUpg/homeStorage）、cond `homeUpg` 门（单项/多项 AND/建成前后翻转）、home.actions 注册+cond 过滤（修好即消失）、`homeRepair` 全链路（材料不足拒绝且不写 flag / 材料+requiresItem 齐全成功扣料且 toolkit 不耗 / 重复修被拒 / garden 建成写 gardenDay / 缺 requiresItem 拒绝）、`homeStorage*` 接口（存取/数量不足/容量上限/拒收武器）、`homeAutoStore` 三分支（未建柜进背包/建柜进柜/柜满退背包）、`dayRollover` 被动产出（雨天标记跨日正确生效且重置、未下雨不产出、菜园 2 天周期精确到"第1天不产第2天产"）、`sleep()` 门窗加成数值核验、`horde_safe_door` 事件注册+优先级+cond（剥离 chance 后确定性核验）、`locationDesc` home 描述追加且不影响其他地点、全库事件→passage 引用 0 断链、供给覆盖率蒙特卡洛（见上）。另跑两组冒烟：① 四项全建成纯 `advance` 60 天（不吃不喝，验证被动产出与既有饥渴/事件系统共存不炸，第 92 天正常饿死，非异常）；② 简易机器人（睡觉→搜刮→按阈值吃喝）跑 30 天循环体，全程 0 异常抛出（机器人策略粗糙提前身故，非 M17 引入的回归）。
+
+**已知取舍**：① 修缮 UI 走「4 个独立 action 直接挂 home.actions」（任务书允许的从简分支），未做统一浮层，行动列表因此在中期会多出 1–4 个按钮，修完自动消失，判定为可接受的界面噪声；② `horde_safe_door` 与 `horde_safe_1` 用「新事件+更高 priority」互斥，而非改写既有事件的 cond（避免触碰 M8 交付内容），两者共享同一触发窗口，行为等价于任务书要求的"变体替换"；③ 家园升级完成文案走 `runDataAction` 的 toast 提示（与搜刮/取水/生火同形状），非独立 passage，保持与既有数据行动一致的交互模型；④ 储物柜拒收武器/服装是本模块主动收窄（任务书未明确要求），理由是耐久条目寄存/取出会脱离装备语义（M14 的 durability 追踪），纯材料/食水类已覆盖任务书全部产出物与建造材料，判定为合理限界，留给未来模块按需放开。
+
+### M16（2026-07-17, opus）
+QoL 四合一（G 收音机 / H 图鉴统计 / I 多存档 / K 清洁度）一次落地。改动：`state.js`（newGame 加 `player.stats.grime` + `world.codex`/`world.stats` + 埋点助手 `codexSee`/`statTick`/`worldStats`/`worldCodex`）、`save.js`（**SAVE_VERSION 3→4** + `migrateV3toV4` 补 codex/stats/grime + normalize 兜底 + `migrateLegacyKey` 旧无后缀键迁槽1）、`time.js`（TUNE 加 M16 脏污常量段）、`combat.js`（startCombat 埋点 codex+fights+grime5、endCombat win 埋点 kills、tryFlee 成功埋点 flees——只加计数行不改战斗流程）、`locations.js`（scavenge 埋点 scavenges+脏污、travelTo sewer 脏污、新增 `washUp` 洗漱行动挂 home/bar）、`enemies.js`（8 敌人各补 `hint`）、`items.js`（新增 `radio` 收音机 material）、`npcs.js`（giftItem 脏污>70 普通礼 +1 失效、dailyChat 前置嫌弃句）、`render.js`（DATA_ACTION_FN 加 `wash`）、`panels.js`（系统面板加「档案」子页 openCodex + 身体面板加脏污条）、`style.css`（`.codex-*`）、`secondary.js`（dou_radio 组装收音机可重复事件 + zhou_radio_remote 远程收听）、`worldevents.js`（rare_metro_1 加 radio roll 掉落 + horde_warn_radio 收音机提前预警）、`grime.js`（**新文件**：10 NPC 嫌弃变体 `G.data.grimeLines` + 高脏污事件野狗/招蝇 2 条）、`index.html`+`tools/build.js`（引入 grime.js）、`docs/Schema.md`（SAVE_VERSION4/grime/codex/stats 登记）。`dist/game.html` 重打（598.4KB，**25 脚本**）。
+
+**SAVE_VERSION 变更**：3→4。迁移链 `case 3: migrateV3toV4` 补 `world.codex={enemies:{}}`、`world.stats={kills:{},scavenges:0,fights:0,flees:0}`、`player.stats.grime=0`；normalize 二次兜底（手工档/空档）。v3→v4 迁移 + 满进度导入导出往返 + 旧键迁槽1 均已回归。
+
+**新字段清单**：`player.stats.grime`（0–100）；`world.codex.enemies{id:true}`；`world.stats{kills{id:n},scavenges,fights,flees}`。
+
+**收音机（G）**：道具 id `radio`（material，weight3，price30，不上架搜刮表）。两来源：① `gas` 阿豆处 `dou_radio` 事件（met dou，可重复 cd720，零件×2+电池×1 换一台）；② `metro` 军囊稀有事件 `rare_metro_1` 加 `roll{chance:0.3}` 小概率出。效果读 `hasItem('radio')`：① `zhou_radio_remote`（scheduled 周三 19:00–23:00，anyOf 排除 campus 与在场版 `zhou_radio_1` 互斥，留言待播口径一致，+理智3，收听 1/4 概率耗 1 电池走 fx.roll）；② `horde_warn_radio`（尸潮预警提前到当日上午 [300,1020]，appointment 仍登记次日 20:30，置 hordeAlert=true 使常规 horde_warn 当日不再命中，两条互斥）。
+
+**图鉴/统计（H）**：埋点全在 startCombat/endCombat/scavenge/tryFlee 加计数行（不改流程）。8 敌人补 hint（弱点/习性一句话）。系统面板「档案」子页（openCodex）：生存统计（存活天数=day-90、累计击杀、搜刮/战斗/逃脱次数）+ 敌人图鉴（已见=名称/hint/击杀数，未见=？？？）。
+
+**多存档（I）**：**M9 已把 save.js 建成 3 槽位（lgys_save_{1,2,3,auto}）+ 面板槽位选择（显示 角色名·第X天·日期·时刻）+ 删除**，本项主体早已满足。M16 只补两点：`migrateLegacyKey` 把 M9 之前可能存在的无后缀单档键 `lgys_save` 一次性迁入槽 1（幂等，槽1 有档则不覆盖，旧键保留做回退），在 listSaves/load 惰性触发；导出/导入维持现状（作用于内存当前局，不绑槽）。
+
+**清洁度（K）** 常量值（全在 `time.js TUNE`）：`grimeScavenge=3`、`grimeCombat=5`、`grimeSewer=10`（经过或搜刮下水道，覆盖普通搜刮值）、`grimeWashFloor=40`（无水擦洗只降到此）、`T_GRIME=70`。洗漱行动 id `wash_up`（home/bar，耗时15分/精力1，cond `grime>0` 才显示；有水消耗 1 份 boiledwater/bottledwater/riverwater/rainwater 清零，无水擦到 40）。效果只做氛围：grime>70 时 dailyChat 前置 `G.data.grimeLines[id]` 嫌弃句（10 NPC）、giftItem 普通礼 +1 失效（喜好+5/厌恶-5 不受影响，返回 snubbed 标记）、高脏污事件 `grime_dog_1`（野狗循味→轰走或迎战 zombie_dog）/`grime_flies_1`（招蝇引臭，室外 12 地点共享池，priority1–2 / cd2880）。
+
+**测试（scratchpad `m16_test.js`，未入库，67 项全绿 0 抛错）**：新开局字段、SAVE_VERSION4、radio 存在且不上架、5 事件 6 段落注册、8 敌人 hint、grimeLines 10 条全覆盖、startCombat 三埋点（codex/fights/grime5）、endCombat kills、scavenge scavenges+grime3、sewer 搜刮/经过各 +10、flee 计数、洗漱有水清零/无水擦到40/低于40不反升、脏污送礼 snubbed 好感不变+洗净后 +1 生效、脏污搭话前置嫌弃句、v3→v4 迁移（补字段+保留 cold）、导出导入往返带新字段、旧键迁槽1+保留、三槽名字独立、新增段落 text（含 msgPending 分支）0 抛错。
+
+**已知取舍 / 留给 M23 收尾**：① `dou_radio` 与 metro 掉落用 `has:{item:...}` presence 门（cond DSL 无物品计数比较），零件×2 的「2」由 fx 扣减兑现，玩家若恰只有 1 个零件会被扣到 0 仍得收音机——微末小利，从简未拦；② 收音机远程收听/尸潮早报与在场版靠「anyOf 排除 campus」「hordeAlert 标志」互斥，均为位置/标志级互斥而非硬去重，理论上玩家可先远程收听再赶去广播站二次收听（属自选往返，留言不会二次消费，仅理智小重复）——同 M13 多约会取舍；③ grime NPC 嫌弃走 dailyChat 前置（非独立事件，区别于 M14 clothing.js 的 decency 独立事件），高脏污事件仍走共享池；④ 洗漱「任意水类」限四种饮用水（含未煮生水，末日里擦身不挑），未纳入 liquor/凉茶/啤酒；⑤ 脏污无硬惩罚（任务书要求），仅社交/氛围面有牙齿，长期不洗最坏结果是好感涨不动 + 偶尔招狗。
 
 ### M15（2026-07-17, opus）
 入冬季节压力实装。改动：`time.js`（TUNE 加 M15 常量段 + 季节 helper `seasonTier/seasonTierNow/seasonNow/isWinter` + advance 每步 `coldStep()` 累积/消退寒冷 + 寒冷阈值 + dayRollover 刷 `world.season`）、`state.js`（stats 加 `cold:0` + world 加 `season` + checkCond 新增 `season` 门）、`save.js`（**SAVE_VERSION 2→3** + `migrateV2toV3` 补 cold + normalize 兜底）、`items.js`（新增 `firewood` 柴火 material）、`locations.js`（`locationDesc` 追加季节句 + `gatherWater` 深冬破冰/冬季接雪 + `boilWater` 兼取暖 + 新增 `makeFire` 与「生火取暖」warm 行动挂 12 室外地点）、`combat.js`（`makeEnemy` 冬季非人类 speed-1 下限1）、`trade.js`（`itemPriceNow` 冬季保暖装涨价 + `winterStock` 上新柴火 + shopBuy 走涨价后价）、`render.js`（DATA_ACTION_FN 加 warm + 状态条冬季/有寒冷时追加「寒冷」条）、`panels.js`（身体面板加寒冷 + 商店买价走 itemPriceNow 带 ❄ 标）、`style.css`（`.statusbar-fill.cold`）、`season.js`（**新文件**，寒潮预警链 + 雪天氛围 7 + 冻毙流浪者 3）、`index.html`+`tools/build.js`（引入 season.js）、`docs/Schema.md`（cold 阈值/季节节/cond season/SAVE_VERSION 登记）。`dist/game.html` 重打（574.4KB，**24 脚本**）。

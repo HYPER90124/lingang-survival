@@ -51,11 +51,13 @@
     var lossStr = parts.length
       ? '口袋全被翻了面，少掉的东西数得出来：[item]' + parts.join('、') + '[/item]。'
       : '口袋全被翻了面，他们没搜出几样值钱的，临走啐了一口。';
+    // M18：若战败时有同伴同行，补一句同伴被打散的交代（不追责，纯氛围）
+    var comp = s._defeatCompanion ? '混乱里' + s._defeatCompanion + '被冲散了，等你醒来时身边空无一人——但愿' + s._defeatCompanion + '比你跑得快。' : '';
     if ((s.world.flags.thugDefeats || 0) <= 1) {
-      return '疼把你砸醒。你趴在冰冷的地上，嘴里都是铁锈味，[blood]肋骨[/blood]随着呼吸一抽一抽地扯着疼，' + lossStr +
+      return '疼把你砸醒。你趴在冰冷的地上，嘴里都是铁锈味，[blood]肋骨[/blood]随着呼吸一抽一抽地扯着疼，' + lossStr + comp +
         '几个钟头就这么没了，他们留了你一条命——大概是懒得为一个搜空的口袋收尸。';
     }
-    return '又是这种熟悉的疼法。你在挨过闷棍的钝痛里醒过来，' + lossStr +
+    return '又是这种熟悉的疼法。你在挨过闷棍的钝痛里醒过来，' + lossStr + comp +
       '躺在地上的这几个钟头，风把街上的灰吹进了你的领口。';
   }, [
     { label: '撑着地面爬起来', fx: { goto: 'dol_defeat_p2' } }

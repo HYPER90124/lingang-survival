@@ -235,7 +235,11 @@
   // 这里的「补充行动」用的是 M2 自定义的简单 {label, cond?, fx?} / {label, sleep} 形状，
   // 与下面 M3 数据行动 {id,label,type,time,energy,requiresItem}（走 G.engine.scavenge）是两套东西。
   var LOCATION_EXTRA_ACTIONS = {
-    home: [{ label: '睡到天亮（恢复精力与生命）', sleep: 8 }]
+    home: [
+      { label: '睡到天亮（恢复精力与生命）', sleep: 8 },
+      // M17：打好「储物柜」升级后才出现，打开存取面板（panels.js openHomeStorage）。
+      { label: '整理储物柜', cond: { homeUpg: { storage: true } }, onclick: function () { G.ui.panels.openHomeStorage(); } }
+    ]
   };
   function tradeActionsFor(locId) {
     var trade = G.data.trade || {};
@@ -273,7 +277,8 @@
 
   // M3/M11 数据行动：type:'scavenge'→G.engine.scavenge，'water'/'boil'（M11 水源系统）→
   // G.engine.gatherWater/boilWater，均处理掉落/耗时/事件结算，形状一致（返回 {ok,msg}）。
-  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire' };
+  // 'repair'（M17 家园升级）→ G.engine.homeRepair，同样形状。
+  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire', wash: 'washUp', repair: 'homeRepair' };
   function runDataAction(locId, action) {
     var fnName = DATA_ACTION_FN[action.type];
     if (!fnName || !G.engine[fnName]) { console.warn('[ui] 未知地点行动类型:', action.type); return; }
@@ -326,18 +331,33 @@
       var alist = h('div', { class: 'action-list' });
       dataActions.forEach(function (a) {
         // requiresItem 缺失时置灰并在文案追加提示（M11：玻璃瓶/打火机等取水+煮水前置道具）。
-        var locked = a.requiresItem && !G.engine.hasItem(a.requiresItem);
+        var lockedItem = a.requiresItem && !G.engine.hasItem(a.requiresItem);
+        // M17：materials（家园升级多材料需求）逐项判定，不足则置灰并列出缺口。
+        var missingMats = [];
+        if (a.materials) {
+          Object.keys(a.materials).forEach(function (mid) {
+            var want = a.materials[mid];
+            if (G.engine.countItem(mid) < want) {
+              var mdef = G.engine.itemDef(mid);
+              missingMats.push((mdef ? mdef.name : mid) + '×' + want);
+            }
+          });
+        }
+        var locked = lockedItem || missingMats.length > 0;
         var btn = h('button', { class: 'btn' + (locked ? ' disabled' : ''), onclick: function () { runDataAction(locId, a); } });
         var label = a.label || '';
-        if (locked) {
+        if (lockedItem) {
           var need = G.engine.itemDef(a.requiresItem);
           label += '（需要' + (need ? need.name : a.requiresItem) + '）';
+        } else if (missingMats.length) {
+          label += '（还差' + missingMats.join('、') + '）';
         }
         btn.innerHTML = G.ui.tags.parse(label);
         alist.appendChild(btn);
       });
       extraActions.forEach(function (a) {
-        var btn = h('button', { class: 'btn', onclick: function () { doAction(a); } });
+        // M17：extraAction 支持 onclick 自定义处理（如打开储物柜面板），无则走原有 doAction。
+        var btn = h('button', { class: 'btn', onclick: function () { if (a.onclick) a.onclick(); else doAction(a); } });
         btn.innerHTML = G.ui.tags.parse(a.label || '');
         alist.appendChild(btn);
       });
@@ -443,6 +463,23 @@
       erow.appendChild(card);
     });
     screen.appendChild(erow);
+
+    // M18：我方同伴单位（战斗型同行者）——独立血条，30% 以下自动撤出后标记已撤离
+    var allies = combat.allies || [];
+    if (allies.length) {
+      var arow = h('div', { class: 'enemy-row ally-row' });
+      allies.forEach(function (u) {
+        var card = h('div', { class: 'enemy-card ally-card' + (u.retreated ? ' dead' : '') });
+        card.appendChild(h('div', { class: 'ename', style: { color: G.ui.tags.npcColor(u.id) }, text: u.name + (u.retreated ? '（已撤离）' : '') }));
+        var track = h('div', { class: 'hp-track' });
+        var pct = Math.max(0, u.hp) / (u.maxHp || 1) * 100;
+        track.appendChild(h('div', { class: 'hp-fill ally', style: { width: pct + '%' } }));
+        card.appendChild(track);
+        card.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--fg-dim)', marginTop: '2px' }, text: Math.max(0, u.hp) + '/' + u.maxHp }));
+        arow.appendChild(card);
+      });
+      screen.appendChild(arow);
+    }
 
     var w = S().player.weapon;
     var wdef = w && G.engine.itemDef(w.id);

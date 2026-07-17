@@ -383,6 +383,30 @@
     '他左右看看，从零件盒的夹层里摸出他的存货分你一点。药劲漫上来，棚顶的铁皮纹路都变得有趣，你们俩靠着皮卡有一搭没一搭地聊废话，聊到日头挪了一个棚宽。松快是真松快——瘾，也是真的又深了一点。',
     [{ label: '（起身离开）', fx: { time: 90 } }]);
 
+  // ---- dou_radio 组装收音机（M16，可重复；零件×2+电池×1 换一台 radio） ----------
+  // 识得阿豆即可（met），不占剧情节拍。已有收音机时他会打趣但仍可再攒一台。
+  events.register({
+    id: 'dou_radio', type: 'story', npc: 'dou', when: ['talk'], once: false, cooldown: 720, priority: 2,
+    cond: { loc: 'gas', met: 'dou', has: { item: ['sparepart', 'battery'] } },
+    passage: 'dou_radio_p1'
+  });
+
+  P('dou_radio_p1',
+    function (s) {
+      var lead = G.engine.hasItem('radio')
+        ? '[npc:dou]阿豆[/npc]瞥见你背包里那台收音机，挑眉：“还想再攒一台？也行，多个备用的，天线烧了不至于抓瞎。”'
+        : '你提起想弄台收音机，[npc:dou]阿豆[/npc]眼睛一亮：“早说啊！广播那点破信号，我闭着眼都能给你调出来。”';
+      return lead + '他伸出三根油乎乎的手指：“[item]零件[/item]两个、[item]电池[/item]一节，我给你焊一台能收临港之声的。周三晚上那姑娘播报，你在城里哪个旮旯都能听见。”';
+    },
+    [
+      { label: '交料，让他组一台（零件×2 电池×1）', cond: { has: { item: ['sparepart', 'battery'] } }, fx: { item: { sparepart: -2, battery: -1, radio: 1 }, time: 40, stat: { energy: -3 }, aff: { dou: 1 }, goto: 'dou_radio_p2' } },
+      { label: '改天再说', fx: {} }
+    ]);
+
+  P('dou_radio_p2',
+    '阿豆把烙铁在裤腿上蹭了两下，埋头一通鼓捣，嘴里念念有词。不到半小时，喇叭里「刺啦」一声窜出人声，他得意地一拍机壳：“听见没？活的！”他把[item]收音机[/item]塞回你怀里，“坏消息来得早，人跑得也早——这玩意儿救过我两回命。”',
+    [{ label: '收好收音机', fx: {} }]);
+
   // ---- dou_s2_1 戒断大事件 + 升3 --------------------------------------------
   events.register({
     id: 'dou_s2_1', type: 'story', npc: 'dou', when: ['enter', 'action', 'talk'], once: true, priority: 8,
@@ -600,6 +624,40 @@
     [
       { label: '陪她播完这一期', fx: { time: 90, stat: { sanity: 5 }, aff: { zhou: 2 } } },
       { label: '往留言箱里投一条新留言', cond: { flag: { 'npc.zhou.s1_1': true, 'npc.zhou.msgPending': false } }, fx: { flag: { 'npc.zhou.msgPending': true }, time: 90, stat: { sanity: 5 }, aff: { zhou: 2 } } }
+    ]);
+
+  // ---- zhou_radio_remote 周三晚·远程收听（M16 收音机效果①） -----------------
+  // 带收音机、不在广播站（campus）时，周三 19:00–23:00 也能收听周响的广播。
+  // 与在场版 zhou_radio_1 互斥（后者 loc:campus，本条 anyOf 排除 campus），留言待播口径一致。
+  var NOT_CAMPUS = { anyOf: [
+    { loc: 'home' }, { loc: 'residential' }, { loc: 'market' }, { loc: 'hospital' },
+    { loc: 'police' }, { loc: 'bar' }, { loc: 'metro' }, { loc: 'park' }, { loc: 'gas' },
+    { loc: 'mall' }, { loc: 'church' }, { loc: 'dock' }, { loc: 'checkpoint' }, { loc: 'sewer' }
+  ] };
+  events.register({
+    id: 'zhou_radio_remote', type: 'scheduled', npc: 'zhou', priority: 4,
+    cond: Object.assign({ weekday: 2, timeRange: [1140, 1380], flag: { 'npc.zhou.s0_1': true }, has: { item: 'radio' } }, NOT_CAMPUS),
+    passage: 'zhou_radio_remote_p'
+  });
+
+  P('zhou_radio_remote_p',
+    function (s) {
+      var head = '晚上八点整，你拧开[item]收音机[/item]，「刺啦」一阵电流后，[npc:zhou]周响[/npc]的声音钻出来，隔着电波也稳当：“这里是临港之声，我是周响。活着的朋友们，晚上好——”';
+      if (G.engine.getFlag('npc.zhou.msgPending')) {
+        s.npcs.zhou.storyFlags.msgPending = false;
+        s.npcs.zhou.storyFlags.msgRead = true;
+        return head + '节目过半，她说要念一张留言。展开纸条的窸窣声透过喇叭传来，随即，你听见自己写下的那句话，被她一字一句念了出来——从发射塔飞出去，绕了大半座城，又落回你耳朵里。那一刻，你留在纸上的话，忽然比说出口时重了很多。';
+      }
+      var pool = [
+        '今晚是安全播报，她挨条念着几条街的路况，哪里塌了，哪里出过尸群。你把收音机贴近耳边，听那把嗓子稳得像什么都吓不倒她——只有你知道，此刻全城不知多少人正和你听着同一句话。',
+        '今晚她念了一段旧书里的散文，念到「春天」那个词时停了两秒：“下面这段，送给还在数日子的那位大爷——接着数，数到春天。”电流里的停顿，比字句更让人心里一暖。',
+        '今晚有人点播，她说本台没唱片，清清嗓子自己唱了一段，跑调跑得理直气壮，唱完自己先笑场：“好了，音乐环节到此结束，本台绝不退票。”你也跟着笑了，笑声在空屋里显得格外响。'
+      ];
+      return head + pool[Math.floor(Math.random() * pool.length)];
+    },
+    [
+      // 收听：+理智 3；每次 1/4 概率耗一节电池（不做电量条，roll 从简）
+      { label: '静静听她播完', fx: { time: 30, stat: { sanity: 3 }, roll: { chance: 0.25, win: { item: { battery: -1 } }, lose: {} } } }
     ]);
 
   // ---- zhou_s2_1 「方舟」传言 + 升3 -----------------------------------------

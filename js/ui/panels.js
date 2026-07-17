@@ -5,6 +5,8 @@
  *   G.ui.panels.open(name)   —— name ∈ 'calendar'|'inventory'|'body'|'map'|'system'
  *                                （render.js 的顶栏/状态条/底部导航按此调用）
  *   G.ui.panels.openShop(id) —— 由 G.ui.showShop 转发调用，见 render.js
+ *   G.ui.panels.openHomeStorage() —— M17：家园储物柜存取面板，由 home 的「整理储物柜」
+ *                                extraAction（render.js LOCATION_EXTRA_ACTIONS）直接调用
  *
  * 依赖 render.js 提供的共享内部工具：G.ui._h（DOM 构造）、G.ui._clear、
  * G.ui.openOverlay（浮层外壳）、G.ui.toast。
@@ -245,6 +247,63 @@
   }
 
   // =========================================================================
+  // 储物柜面板（M17，仿背包双列表：柜内点击取出 / 背包点击存入）
+  // =========================================================================
+  function openHomeStorage() {
+    openTop({
+      title: '储物柜',
+      build: function (body) {
+        function refreshPanel() { if (activeOverlay) activeOverlay.refresh(); G.ui.refresh(); }
+        var weight = G.engine.homeStorageWeight();
+        var cap = G.engine.homeStorageCap();
+        body.appendChild(h('div', {
+          class: 'inv-weight' + (weight >= cap ? ' over' : ''),
+          text: '柜内 ' + weight.toFixed(1) + ' / ' + cap
+        }));
+
+        body.appendChild(h('div', { class: 'section-title', text: '柜内物资（点击取出）' }));
+        var storeList = h('div', { class: 'inv-list' });
+        var st = S().homeStorage || [];
+        st.forEach(function (entry) {
+          var def = G.engine.itemDef(entry.id) || {};
+          var row = h('div', {
+            class: 'inv-item',
+            onclick: function () { G.engine.homeStorageWithdraw(entry.id, 1); refreshPanel(); }
+          });
+          row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '×' + entry.count }));
+          storeList.appendChild(row);
+        });
+        if (!st.length) storeList.appendChild(h('div', { class: 'inv-empty', text: '柜子空的' }));
+        body.appendChild(storeList);
+
+        body.appendChild(h('div', { class: 'section-title', text: '背包物资（点击存入）' }));
+        var bagList = h('div', { class: 'inv-list' });
+        var bag = (S().player.inventory || []).filter(function (e) {
+          var d = G.engine.itemDef(e.id);
+          return d && d.type !== 'weapon' && d.type !== 'clothing';
+        });
+        bag.forEach(function (entry) {
+          var def = G.engine.itemDef(entry.id) || {};
+          var row = h('div', {
+            class: 'inv-item',
+            onclick: function () {
+              var res = G.engine.homeStorageDeposit(entry.id, 1);
+              if (res && !res.ok && res.msg) G.ui.toast(res.msg);
+              refreshPanel();
+            }
+          });
+          row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '×' + entry.count }));
+          bagList.appendChild(row);
+        });
+        if (!bag.length) bagList.appendChild(h('div', { class: 'inv-empty', text: '背包里没有能存的东西' }));
+        body.appendChild(bagList);
+      }
+    });
+  }
+
+  // =========================================================================
   // 身体面板
   // =========================================================================
   var BODY_STATS = [
@@ -256,7 +315,8 @@
     { key: 'alcohol', label: '酒精', abnormal: function (v) { return v > G.TUNE.T_DRUNK; }, note: function (v) { return v > G.TUNE.T_DRUNK ? '酩酊大醉，判定受罚' : ''; } },
     { key: 'addiction', label: '成瘾', abnormal: function (v) { return v > G.TUNE.T_ADDICT; }, note: function (v) { return v > G.TUNE.T_ADDICT ? '瘾发难耐，每日发作' : ''; } },
     { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } },
-    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } }
+    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } },
+    { key: 'grime', label: '脏污', abnormal: function (v) { return v > G.TUNE.T_GRIME; }, note: function (v) { return v > G.TUNE.T_GRIME ? '一身臊臭，惹人嫌弃（NPC 反应/送礼受影响）' : ''; } }
   ];
   // ---- 服装区块（三槽显示 + 换装/卸下/修补） ------------------------------
   var CLOTH_SLOT_META = [
@@ -440,12 +500,72 @@
   }
 
   // =========================================================================
+  // 档案子页（M16）：生存统计 + 敌人图鉴
+  // =========================================================================
+  function openCodex() {
+    G.ui.openOverlay({
+      title: '档案',
+      build: function (body) {
+        var w = S().world || {};
+        var st = w.stats || { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+        var codex = (w.codex && w.codex.enemies) || {};
+        var killsMap = st.kills || {};
+        var totalKills = 0;
+        for (var k in killsMap) totalKills += killsMap[k] || 0;
+        var survived = Math.max(0, (S().player.day || 90) - 90);
+
+        body.appendChild(h('div', { class: 'section-title', text: '生存统计' }));
+        var stats = [
+          ['存活天数', survived + ' 天（第 ' + S().player.day + ' 天）'],
+          ['累计击杀', String(totalKills)],
+          ['搜刮次数', String(st.scavenges || 0)],
+          ['战斗次数', String(st.fights || 0)],
+          ['逃脱次数', String(st.flees || 0)]
+        ];
+        var grid = h('div', { class: 'codex-stats' });
+        stats.forEach(function (row) {
+          var cell = h('div', { class: 'codex-stat' });
+          cell.appendChild(h('span', { class: 'codex-stat-label', text: row[0] }));
+          cell.appendChild(h('span', { class: 'codex-stat-val', text: row[1] }));
+          grid.appendChild(cell);
+        });
+        body.appendChild(grid);
+
+        body.appendChild(h('div', { class: 'section-title', text: '敌人图鉴' }));
+        var enemies = G.data.enemies || {};
+        var seenCount = 0, totalCount = 0;
+        var list = h('div', { class: 'codex-enemies' });
+        Object.keys(enemies).forEach(function (id) {
+          totalCount++;
+          var def = enemies[id];
+          var seen = !!codex[id];
+          if (seen) seenCount++;
+          var card = h('div', { class: 'codex-enemy' + (seen ? '' : ' unseen') });
+          var top = h('div', { class: 'codex-enemy-head' });
+          top.appendChild(h('span', { class: 'codex-enemy-name', text: seen ? (def.name || id) : '？？？' }));
+          if (seen) top.appendChild(h('span', { class: 'codex-enemy-kills', text: '击杀 ' + (killsMap[id] || 0) }));
+          card.appendChild(top);
+          card.appendChild(h('div', { class: 'codex-enemy-hint', text: seen ? (def.hint || '') : '尚未遭遇——出去闯闯才知道它的底细。' }));
+          list.appendChild(card);
+        });
+        body.appendChild(h('div', { class: 'codex-progress', text: '已鉴 ' + seenCount + ' / ' + totalCount }));
+        body.appendChild(list);
+      }
+    });
+  }
+
+  // =========================================================================
   // 系统面板
   // =========================================================================
   function openSystem() {
     openTop({
       title: '系统',
       build: function (body) {
+        // M16：档案（生存统计 + 敌人图鉴）入口
+        var codexRow = h('div', { class: 'item-actions', style: { marginBottom: '12px' } });
+        codexRow.appendChild(h('button', { class: 'btn primary', text: '📖 档案（统计 / 图鉴）', onclick: function () { openCodex(); } }));
+        body.appendChild(codexRow);
+
         var slots = G.engine.listSaves();
         var list = h('div', { class: 'slot-list' });
         [1, 2, 3].forEach(function (slot) {
@@ -623,7 +743,8 @@
       else if (name === 'system') openSystem();
       else console.warn('[panels] 未知面板:', name);
     },
-    openShop: openShop
+    openShop: openShop,
+    openHomeStorage: openHomeStorage
   };
 
 })();

@@ -22,6 +22,9 @@
  *                  M15：兼「取暖」，煮水时顺带消退寒冷 TUNE.boilWarmRelief
  *   'warm'     —— 走 G.engine.makeFire（M15 新增），requiresItem:'firewood'（消耗 1），
  *                  室外「生火取暖」大幅消退寒冷 TUNE.fireWarmRelief；cond:{stat:{cold:{gt:0}}} 仅有寒冷时显示
+ *   'repair'   —— 走 G.engine.homeRepair（M17 新增），action.repairKey:'door'|'rain'|'garden'|'storage'，
+ *                  action.materials:{itemId:count} 消耗性材料，requiresItem 可选（在包不消耗，如 toolkit）；
+ *                  一次性写入 world.homeUpg[repairKey]=true，cond:{homeUpg:{key:false}} 修完即从列表消失
  *
  * 配套小逻辑（M1 未提供，数据层补齐，挂到 G.engine）：
  *   G.engine.locationNeighbors(locId)   —— 含 sewer 捷径解锁后的双向可达表 {locId:minutes}
@@ -44,7 +47,17 @@
       descDay: '客厅地板铺着旧毯子，窗帘拉得只留一条缝，桌上摆着从这屋里翻出来的物资。',
       descNight: '你把门栓插死，屋外的声响隔着一层砖墙，烛火晃得墙上影子跟着抖。',
       actions: [
-        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' },
+        { id: 'wash_up', label: '洗漱', type: 'wash', time: 15, energy: 1, cond: { stat: { grime: { gt: 0 } } } },
+        // M17：家园四项升级，一次性行动，修好后按 cond 从列表消失（world.homeUpg 记录，SAVE_VERSION5）。
+        { id: 'upg_door', label: '加固门窗', type: 'repair', repairKey: 'door', time: 90, energy: 10,
+          materials: { scrapmetal: 3, tape: 2 }, requiresItem: 'toolkit', cond: { homeUpg: { door: false } } },
+        { id: 'upg_rain', label: '装雨水收集器', type: 'repair', repairKey: 'rain', time: 60, energy: 8,
+          materials: { glassbottle: 3, rope: 1, wire: 1 }, cond: { homeUpg: { rain: false } } },
+        { id: 'upg_garden', label: '开垦小菜园', type: 'repair', repairKey: 'garden', time: 60, energy: 10,
+          materials: { wildveggie: 2, rainwater: 2 }, cond: { homeUpg: { garden: false } } },
+        { id: 'upg_storage', label: '打造储物柜', type: 'repair', repairKey: 'storage', time: 90, energy: 10,
+          materials: { scrapmetal: 2, rope: 2 }, requiresItem: 'toolkit', cond: { homeUpg: { storage: false } } }
       ],   // 安全区：睡觉/储物箱/存档由 M2 UI 直接调用引擎接口，不算搜刮行动
       scavengeTable: [],
       adjacent: { residential: 20, market: 20, bar: 30 },
@@ -136,7 +149,8 @@
       descDay: '白天的酒吧没什么人，苏曼在吧台后面擦杯子，半数椅子还倒扣在桌面上，油灯只点了靠里的几盏。',
       descNight: '灯光昏黄，酒气混着烟味，老秦在门口守着，没人敢在这里动手。',
       actions: [
-        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' },
+        { id: 'wash_up', label: '洗漱', type: 'wash', time: 15, energy: 1, cond: { stat: { grime: { gt: 0 } } } }
       ],   // 中立据点禁械，无搜刮
       scavengeTable: [],
       adjacent: { home: 30, market: 20, police: 25, campus: 30, church: 20 },
@@ -363,10 +377,22 @@
       ? '　初冬的夜风灌进衣领，冻得人骨头发紧。'
       : '　初冬的寒意漫上来，路边的水洼结了层薄冰。';
   }
+  // M17：home 描述追加已修好的升级可见变化（按 world.homeUpg 逐项拼接，其余地点不受影响）。
+  function homeUpgSuffix(locId) {
+    if (locId !== 'home') return '';
+    var hu = G.state.world.homeUpg;
+    if (!hu) return '';
+    var out = '';
+    if (hu.door) out += '　窗框钉了废铁又缠了胶带，风声都被挡在外头。';
+    if (hu.rain) out += '　屋檐下挂着一串倒扣的玻璃瓶，接雨水用的。';
+    if (hu.garden) out += '　墙根那畦野菜绿油油的，是自己种的。';
+    if (hu.storage) out += '　墙角那口储物柜锁得严实。';
+    return out;
+  }
   function locationDesc(locId) {
     var loc = G.data.locations[locId];
     if (!loc) return '';
-    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId);
+    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId) + homeUpgSuffix(locId);
   }
   G.engine.locationDesc = locationDesc;
 
@@ -407,6 +433,8 @@
     var minutes = Math.round(neighbors[destId] * G.engine.timeCostMod());
     G.engine.applyFx({ time: minutes });
     if (G.state.player.stats.hp <= 0) return { ok: false, msg: '你倒下了。', died: true };
+    // M16：经过下水道一身污泥（进入 sewer 累积脏污）
+    if (destId === 'sewer' && G.TUNE) G.engine.statAdd('grime', G.TUNE.grimeSewer || 10);
     G.engine.goLocation(destId);
     return { ok: true, minutes: minutes };
   }
@@ -453,6 +481,10 @@
       });
     }
     G.state.scavenge[locId] = count + 1;
+
+    // M16：搜刮埋点（统计）+ 脏污累积（下水道翻找更脏，用 grimeSewer 覆盖）
+    if (G.engine.statTick) G.engine.statTick('scavenges');
+    if (G.TUNE) G.engine.statAdd('grime', locId === 'sewer' ? (G.TUNE.grimeSewer || 10) : (G.TUNE.grimeScavenge || 3));
 
     G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
@@ -551,6 +583,71 @@
     return { ok: true, msg: '你拢起[item]柴火[/item]生了堆火，凑近烤了烤，寒气退了大半。' };
   }
   G.engine.makeFire = makeFire;
+
+  // 洗漱（M16）：home/bar 可用。有水（消耗 1 份任意水类道具）洗到干净（grime→0）；
+  // 无水只能干擦，脏污降到 grimeWashFloor（40）为止。耗时 15 分钟。
+  var WASH_WATER = ['boiledwater', 'bottledwater', 'riverwater', 'rainwater'];
+  function washUp(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    var grime = G.engine.statGet('grime') || 0;
+    var floor = (G.TUNE && G.TUNE.grimeWashFloor != null) ? G.TUNE.grimeWashFloor : 40;
+    // 找一份能用来洗的水
+    var water = null;
+    for (var i = 0; i < WASH_WATER.length; i++) { if (G.engine.hasItem(WASH_WATER[i])) { water = WASH_WATER[i]; break; } }
+    var msg;
+    if (water) {
+      G.engine.removeItem(water, 1);
+      G.engine.statSet('grime', 0);
+      var wd = G.engine.itemDef(water);
+      msg = '你倒出一份[item]' + (wd ? wd.name : '水') + '[/item]，从头到脸细细擦洗了一遍，身上的臭味和泥垢总算下去了，人也精神了些。';
+    } else {
+      if (grime <= floor) {
+        msg = '没有水，你只用干布擦了擦，能弄掉的本就不多——这点脏污，擦不擦一个样。';
+      } else {
+        G.engine.statSet('grime', floor);
+        msg = '手边没水，你只能拿干布使劲擦掉外层的泥污。凑合干净了些，但没水冲，终究擦不透。';
+      }
+    }
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: msg };
+  }
+  G.engine.washUp = washUp;
+
+  // 家园修缮（M17）：一次性消耗材料把 world.homeUpg[repairKey] 写 true。
+  // requiresItem 只判定在包（如 toolkit），不消耗；materials 逐项判定齐全后一次性扣减。
+  var HOME_UPG_MSG = {
+    door: '你把[item]废铁[/item]钉上窗框，[item]胶带[/item]把缝隙一道道封死，工具箱里的螺丝刀拧到最后一颗——这扇门总算不是纸糊的了。',
+    rain: '拿[item]绳子[/item]和[item]电线[/item]把几只[item]玻璃瓶[/item]倒扣着串成一串，斜挂在屋檐下——下次落雨，不用再跑一趟。',
+    garden: '翻松墙根那块空地，把[item]野菜[/item]籽埋进去，浇了两瓶[item]雨水[/item]——能不能长起来，只能等了。',
+    storage: '[item]废铁[/item]焊死柜脚，[item]绳子[/item]捆紧柜身，工具箱里的锤子敲了半宿——这口柜子总算能锁东西了。'
+  };
+  function homeRepair(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    var w = G.state.world;
+    var hu = w.homeUpg || (w.homeUpg = { door: false, rain: false, garden: false, storage: false });
+    if (hu[action.repairKey]) return { ok: false, msg: '这里已经修过了。' };
+    if (action.requiresItem && !G.engine.hasItem(action.requiresItem)) {
+      var need = G.engine.itemDef(action.requiresItem);
+      return { ok: false, msg: '没有[item]' + (need ? need.name : action.requiresItem) + '[/item]，这活儿干不了。' };
+    }
+    var mats = action.materials || {};
+    for (var mid in mats) {
+      if (G.engine.countItem(mid) < mats[mid]) {
+        var mdef = G.engine.itemDef(mid);
+        return { ok: false, msg: '材料不够，还差[item]' + (mdef ? mdef.name : mid) + '[/item]。' };
+      }
+    }
+    for (var rid in mats) G.engine.removeItem(rid, mats[rid]);
+    hu[action.repairKey] = true;
+    if (action.repairKey === 'garden') w.gardenDay = G.state.player.day;   // 开始 2 天收获计时
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: HOME_UPG_MSG[action.repairKey] || '修好了。' };
+  }
+  G.engine.homeRepair = homeRepair;
 
   // ---- 通用氛围/收获/遇敌 random 事件（每地点 2–3 条，无剧情，给 M8 事件池打底） ----
   function passage(id, text, choices) {

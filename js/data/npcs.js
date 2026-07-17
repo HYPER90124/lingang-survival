@@ -79,6 +79,19 @@
         { loc: 'bar', range: [1140, 120] }        // 19:00–次日02:00
       ],
       likes: ['liquor', 'driedmeat'], dislikes: ['spoiledcan'],
+      // M18 同行：近战型打手，硬朗抗揍。dmg/hp/hit 为战斗内临时值（进场满血）。
+      companion: {
+        role: 'melee', hp: 50, dmg: [7, 12], hit: 0.82,
+        joinLine: '[npc:qin]老秦[/npc]把枪往腰后一别，跟了上来："走前头，我替你压后。"',
+        lines: [
+          '[npc:qin]老秦[/npc]半步不离地缀在你侧后，目光扫过每一个墙角。',
+          '"别贴着窗根走。"[npc:qin]老秦[/npc]伸手把你往里带了带。',
+          '[npc:qin]老秦[/npc]低声报着方位："左手两点钟，有动静，盯着。"',
+          '"跟我当年带的兵一个毛病——太急。"[npc:qin]老秦[/npc]难得咧了下嘴。',
+          '[npc:qin]老秦[/npc]替你拎过半袋沉东西，一声没吭。',
+          '"这一带我熟。"[npc:qin]老秦[/npc]用下巴点了点前路，"跟紧。"'
+        ]
+      },
       chat: [
         [
           '[npc:qin]老秦[/npc]上下打量你一眼，没说话，只把手按在腰间。',
@@ -161,6 +174,19 @@
         { loc: 'sewer', stageMin: 2 }             // 信任阶段后可在下水道据点找到；此前事件驱动
       ],
       likes: ['chocolatebar', 'liquor'], dislikes: ['spoiledcan'],
+      // M18 同行：不参战的侦察位——逃跑成功率 +0.15、随机遇敌几率 -30%（scout 分支，无战斗单位）。
+      companion: {
+        role: 'scout', scout: true, fleeBonus: 0.15, encMod: 0.30,
+        joinLine: '[npc:mao]灰猫[/npc]松松垮垮地跟上来，压低声音："我在前头替你探路——别指望我动手，我只带你绕开麻烦。"',
+        lines: [
+          '[npc:mao]灰猫[/npc]忽然拽住你的袖子，示意噤声，等一队黑影从街对面晃过去才松手。',
+          '"这条巷子我熟，跟我走。"[npc:mao]灰猫[/npc]拐进一道你没注意到的窄缝。',
+          '[npc:mao]灰猫[/npc]贴着墙走，眼睛却在替你数着屋顶和窗口。',
+          '"前面味道不对，绕。"[npc:mao]灰猫[/npc]头也不回。',
+          '[npc:mao]灰猫[/npc]小声哼着不成调的歌，倒像是这末世里唯一放松的人。',
+          '"跟着我，少挨两顿打。"[npc:mao]灰猫[/npc]冲你眨眨眼。'
+        ]
+      },
       chat: [
         [
           '[npc:mao]灰猫[/npc]勾起嘴角：“情报可不便宜，宝贝。”',
@@ -243,6 +269,19 @@
         { loc: 'gas' }                            // 全天加油站
       ],
       likes: ['sparepart', 'toolkit'], dislikes: ['wildveggie'],
+      // M18 同行：持枪火力位，伤害高但命中一般（手抖），弹药不计（自带）。体格较弱易被打退。
+      companion: {
+        role: 'gun', hp: 38, dmg: [6, 11], hit: 0.68,
+        joinLine: '[npc:dou]阿豆[/npc]抄起那把改装枪，手还在抖："我、我跟你去……子弹我自己有，你别管。"',
+        lines: [
+          '[npc:dou]阿豆[/npc]端着枪走得深一脚浅一脚，枪口却始终朝着有动静的方向。',
+          '"这枪我改过，后坐小。"[npc:dou]阿豆[/npc]小声跟你显摆。',
+          '[npc:dou]阿豆[/npc]的手抖得厉害，攥紧枪托才勉强稳住。',
+          '"有你在……我没那么慌。"[npc:dou]阿豆[/npc]闷声说。',
+          '[npc:dou]阿豆[/npc]一边走一边替你把松了的背带扣紧。',
+          '"听见没？那声音……是空调外机，不是丧尸。"[npc:dou]阿豆[/npc]松了口气。'
+        ]
+      },
       chat: [
         [
           '[npc:dou]阿豆[/npc]手抖着拧螺丝：“修东西……可以，先给点药。”',
@@ -617,6 +656,11 @@
     var d = def(id), n = nstate(id), p = S().player;
     var tier = Math.min(n.stage, d.chat.length - 1);
     var line = pickLine(d.chat[tier], n, 'chatIdx');
+    // M16 清洁度：脏污过高时，日常搭话前置一句该 NPC 的嫌弃变体（10 条见 grime.js）
+    if (G.TUNE && (G.engine.statGet('grime') || 0) > G.TUNE.T_GRIME &&
+        G.data.grimeLines && G.data.grimeLines[id]) {
+      line = G.data.grimeLines[id] + '\n\n' + line;
+    }
     if (n.vars.lastChatDay === p.day) {
       // 今天已互动过：仍给一句话，但不再加好感
       showTalkLine(line);
@@ -664,8 +708,13 @@
     else if (d.dislikes.indexOf(itemId) >= 0) { delta = -5; reaction = 'dislike'; }
     else { delta = 1; reaction = 'plain'; }
 
+    // M16 清洁度：脏污过高时，普通礼物的 +1 好感失效（喜好/厌恶不受影响）
+    var grimy = G.TUNE && (G.engine.statGet('grime') || 0) > G.TUNE.T_GRIME;
+    var snubbed = grimy && reaction === 'plain';
+    if (snubbed) delta = 0;
+
     G.engine.removeItem(itemId, 1);
-    G.engine.affAdd(id, delta);
+    if (delta !== 0) G.engine.affAdd(id, delta);
     n.vars.lastGiftDay = p.day;
     n.met = true;
 
@@ -675,11 +724,132 @@
     var msg;
     if (reaction === 'like') msg = tag + '接过' + itag + '，眼神软了一瞬：“……有心了。”（好感 ' + sign + '）';
     else if (reaction === 'dislike') msg = '你递上' + itag + '，' + tag + '皱眉推开：“这东西我用不上。”（好感 ' + sign + '）';
+    else if (snubbed) msg = tag + '本要伸手，却被你一身脏臭熏得皱起眉，只用两根指头捏过' + itag + '，敷衍地点了点头，没再多话。（好感 +0）';
     else msg = tag + '接过' + itag + '，点了点头：“谢了。”（好感 ' + sign + '）';
 
-    return { ok: true, delta: delta, reaction: reaction, msg: msg };
+    return { ok: true, delta: delta, reaction: reaction, snubbed: snubbed, msg: msg };
   }
   G.engine.giftItem = giftItem;
+
+  // ==========================================================================
+  // 同行作战（M18）—— 数据+逻辑层。状态模型 world.companion 由 state.js 提供，
+  // 战斗单位由 combat.js 消费；这里管：邀请/解散、战斗单位构建、侦察加成、氛围对话池。
+  // 通用（按 id 配置 npc.companion），M19 战役强制同行段落可直接调 companionInvite/End。
+  // ==========================================================================
+  function companionDefOf(id) { var d = def(id); return d && d.companion ? d.companion : null; }
+  G.engine.companionDefOf = companionDefOf;
+
+  // 招待可用物：吃食（food）或酒（烈酒/啤酒/凉茶）；生水不算招待。
+  function isTreatItem(id) {
+    var d = G.engine.itemDef(id); if (!d) return false;
+    if (d.type === 'food') return true;
+    return ['liquor', 'beer', 'herbaltea'].indexOf(id) >= 0;
+  }
+  G.engine.isTreatItem = isTreatItem;
+
+  // 邀请同行。payment ∈ 'aff'（好感-3）| 'treat'（消耗一份吃食/酒，需传 itemId）。
+  function companionInvite(id, payment, itemId) {
+    var d = def(id), n = nstate(id);
+    if (!d || !d.companion) return { ok: false, msg: '这个人帮不上战斗。' };
+    if (!n || !n.alive) return { ok: false, msg: (d ? d.name : '这个人') + '已经不在了。' };
+    if (G.engine.companionActive()) {
+      var cur = G.engine.companionId();
+      return { ok: false, msg: cur === id ? d.name + '已经在跟着你了。'
+        : '已经有' + ((def(cur) && def(cur).name) || '人') + '在同行了，一次只能带一个。' };
+    }
+    if (!G.engine.npcPresent(id, S().player.location)) return { ok: false, msg: d.name + '现在不在这儿。' };
+    if (G.engine.affGet(id) < 60) return { ok: false, msg: '你和' + d.name + '还没熟到能并肩上阵的地步。' };
+    if (payment === 'treat') {
+      if (!itemId || !isTreatItem(itemId) || !G.engine.hasItem(itemId)) return { ok: false, msg: '得先有一份吃食或酒才能招待。' };
+      G.engine.removeItem(itemId, 1);
+    } else {
+      G.engine.affAdd(id, -3);
+    }
+    var until = (S().player.day + 1) * 1440;   // 当日 24:00（次日 00:00 的 absMinute）
+    S().world.companion = { id: id, until: until };
+    n.met = true;
+    return { ok: true, msg: strip(d.companion.joinLine), joinLine: d.companion.joinLine, id: id };
+  }
+  G.engine.companionInvite = companionInvite;
+
+  // 解散/结束同行。reason ∈ 'dismiss'(玩家主动)|'home'(回据点)|'expire'(24:00)|'retreat'(被打退,好感-2)|'defeat'(战败打散)。
+  function companionEnd(reason) {
+    var c = G.engine.companionState(); if (!c) return { ended: false };
+    var d = def(c.id), name = (d && d.name) || '同伴';
+    if (reason === 'retreat') G.engine.affAdd(c.id, -2);
+    S().world.companion = null;
+    var msg;
+    if (reason === 'retreat') msg = name + '伤得不轻，退出了战斗——今天的同行到此为止。';
+    else if (reason === 'expire') msg = '夜深了，' + name + '与你就此别过。';
+    else if (reason === 'home') msg = '回到据点，' + name + '和你道了别，各自歇下。';
+    else if (reason === 'defeat') msg = name + '也被打散在乱局里，不知去向。';
+    else msg = name + '与你分开了。';
+    return { ended: true, msg: msg, id: c.id, reason: reason };
+  }
+  G.engine.companionEnd = companionEnd;
+
+  // 战斗单位（仅战斗型同伴；侦察位 scout 返回 null 不参战）。进场满血，值为战斗内临时态。
+  function companionCombatUnit() {
+    var c = G.engine.companionState(); if (!c) return null;
+    var cd = companionDefOf(c.id);
+    if (!cd || cd.scout) return null;
+    var hp = cd.hp || 40;
+    return {
+      id: c.id, name: (def(c.id) && def(c.id).name) || c.id, role: cd.role,
+      hp: hp, maxHp: hp, dmg: cd.dmg || [4, 8], hit: cd.hit != null ? cd.hit : 0.8, retreated: false
+    };
+  }
+  G.engine.companionCombatUnit = companionCombatUnit;
+
+  // 侦察位（灰猫）：是否在同行 + 逃跑加成 + 遇敌几率削减（供 combat/events 读取）。
+  function companionScoutActive() { var cd = G.engine.companionActive() && companionDefOf(G.engine.companionId()); return !!(cd && cd.scout); }
+  function companionFleeBonus() { var cd = companionScoutActive() && companionDefOf(G.engine.companionId()); return cd ? (cd.fleeBonus || 0) : 0; }
+  function companionEncMod() { var cd = companionScoutActive() && companionDefOf(G.engine.companionId()); return cd ? (cd.encMod || 0) : 0; }
+  G.engine.companionScoutActive = companionScoutActive;
+  G.engine.companionFleeBonus = companionFleeBonus;
+  G.engine.companionEncMod = companionEncMod;
+
+  // 回据点自动道别（goLocation 到达 home 时调用）。
+  function companionOnArrive(loc) {
+    if (loc === 'home' && G.engine.companionActive()) {
+      var r = companionEnd('home');
+      if (r.msg) toast(r.msg);
+    }
+  }
+  G.engine.companionOnArrive = companionOnArrive;
+
+  // 跨日 24:00 到期（dayRollover 调用）。
+  function companionMidnight() {
+    if (G.engine.companionActive()) {
+      var r = companionEnd('expire');
+      if (r.msg) toast(r.msg);
+    }
+  }
+  G.engine.companionMidnight = companionMidnight;
+
+  // 同行氛围对话：移动/搜刮低频触发同伴一句话（random 事件，cond.companion 门 + chance/cd）。
+  if (G.data.story && G.data.story.register) {
+    G.data.story.register({
+      id: 'companion_chat_p',
+      text: function (s) {
+        var c = s.world && s.world.companion;
+        var cd = c && companionDefOf(c.id);
+        var lines = cd && cd.lines;
+        if (!lines || !lines.length) return '……';
+        return lines[Math.floor(Math.random() * lines.length)];
+      },
+      choices: [{ label: '（继续赶路）', fx: {} }]
+    });
+  }
+  if (G.data.events && G.data.events.register) {
+    G.data.events.register({
+      id: 'companion_chat', type: 'random', when: ['enter', 'action'], priority: 1, cooldown: 240,
+      cond: { companion: true, chance: 0.15 },
+      passage: 'companion_chat_p'
+    });
+  }
+
+  function strip(s) { return G.ui && G.ui.tags ? G.ui.tags.strip(s) : s; }
 
   // ==========================================================================
   // 好感面板（在 G.ui 下新增并登记；入口见 render.js 底部导航「关系」）
@@ -717,6 +887,44 @@
           }));
           body.appendChild(row);
         });
+      }
+    });
+  }
+
+  // M18：邀请同行的付费方式选择浮层（欠人情 / 请客）
+  function openCompanionInvite(id) {
+    var h = G.ui._h;
+    var ov = G.ui.openOverlay({
+      title: '邀请' + def(id).name + '同行',
+      build: function (body) {
+        body.appendChild(h('div', { class: 'slot-summary', text: '带上一名同伴到今晚（回据点或午夜自动散伙），一次只能带一个。要么欠个人情，要么请对方吃点东西。', style: { marginBottom: '8px' } }));
+        var r1 = h('div', { class: 'shop-item' });
+        r1.appendChild(h('span', { text: '欠个人情（好感 -3）' }));
+        r1.appendChild(h('button', {
+          class: 'btn', text: '就这样', onclick: function () {
+            var res = companionInvite(id, 'aff');
+            toast(res.msg); ov.close(); openNpcPanel();
+          }
+        }));
+        body.appendChild(r1);
+        var treats = S().player.inventory.filter(function (e) { return isTreatItem(e.id); });
+        if (treats.length) {
+          body.appendChild(h('div', { class: 'section-title', text: '请客（消耗一份）' }));
+          treats.forEach(function (e) {
+            var idef = G.engine.itemDef(e.id) || {};
+            var row = h('div', { class: 'shop-item' });
+            row.appendChild(h('span', { text: (idef.name || e.id) + '×' + e.count }));
+            row.appendChild(h('button', {
+              class: 'btn', text: '请这个', onclick: function () {
+                var res = companionInvite(id, 'treat', e.id);
+                toast(res.msg); ov.close(); openNpcPanel();
+              }
+            }));
+            body.appendChild(row);
+          });
+        } else {
+          body.appendChild(h('div', { class: 'slot-summary', text: '（你身上没有可以招待的吃食或酒）', style: { opacity: '.7' } }));
+        }
       }
     });
   }
@@ -774,6 +982,25 @@
               onclick: gifted ? null : function () { chooseGift(id, openNpcPanel); }
             }));
             card.appendChild(acts);
+          }
+          // M18 同行入口/解散（战斗型 NPC 才有 companion 数据；解散不受在场门限制）
+          if (n.alive && d.companion) {
+            var cRow = h('div', { class: 'slot-actions' });
+            if (G.engine.companionId() === id) {
+              cRow.appendChild(h('button', {
+                class: 'btn primary', text: '解散同行', onclick: function () {
+                  var r = G.engine.companionEnd('dismiss');
+                  if (r && r.msg) toast(r.msg);
+                  openNpcPanel();
+                }
+              }));
+              card.appendChild(cRow);
+            } else if (!G.engine.companionActive() && G.engine.npcPresent(id, here) && G.engine.affGet(id) >= 60) {
+              cRow.appendChild(h('button', {
+                class: 'btn', text: '邀请同行', onclick: function () { openCompanionInvite(id); }
+              }));
+              card.appendChild(cRow);
+            }
           }
           body.appendChild(card);
         });

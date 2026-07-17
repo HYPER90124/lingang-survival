@@ -92,6 +92,7 @@
     var combat = {
       encounterId: encounterId,
       enemies: ids.map(makeEnemy),
+      allies: [],                     // M18：我方同伴单位（战斗型同行者，进场满血）
       defending: false,
       turn: 0,
       log: [],
@@ -102,7 +103,14 @@
       onLose: opts.onLose || null,
       onFlee: opts.onFlee || null
     };
+    // M18：把当前战斗型同行者作为我方第二单位加入（侦察位不参战，返回 null）
+    var ally = G.engine.companionCombatUnit ? G.engine.companionCombatUnit() : null;
+    if (ally) { combat.allies.push(ally); combat.log.push('[npc:' + ally.id + ']' + ally.name + '[/npc]与你并肩而立。'); }
     S().combat = combat;
+    // M16 埋点（纯数据写入，不改战斗流程）：登记敌人图鉴 + 战斗次数计数 + 脏污累积
+    if (G.engine.codexSee) combat.enemies.forEach(function (e) { G.engine.codexSee(e.id); });
+    if (G.engine.statTick) G.engine.statTick('fights');
+    if (G.TUNE && G.TUNE.grimeCombat) G.engine.statAdd('grime', G.TUNE.grimeCombat);
     if (G.ui.showCombat) G.ui.showCombat(combat);
     return combat;
   }
@@ -150,6 +158,37 @@
     return null;
   }
   function allDead() { return S().combat.enemies.every(function (e) { return !e.alive; }); }
+
+  // ---- M18 同伴单位 -------------------------------------------------------
+  function livingAllies() {
+    var a = S().combat.allies || [];
+    return a.filter(function (u) { return !u.retreated; });
+  }
+  // 同伴在玩家行动后自动攻击最靠前的敌人（AI 就打 firstAlive）
+  function allyTurn() {
+    var combat = S().combat, log = combat.log;
+    livingAllies().forEach(function (u) {
+      var target = firstAlive();
+      if (!target) return;
+      if (Math.random() > u.hit) { log.push('[npc:' + u.id + ']' + u.name + '[/npc]的攻击落了空。'); return; }
+      var dmg = rand(u.dmg[0], u.dmg[1]);
+      target.hp -= dmg;
+      var verb = u.role === 'gun' ? '一枪打中' : '一记狠招砸中';
+      log.push('[npc:' + u.id + ']' + u.name + '[/npc]' + verb + foeName(target) + '，造成 ' + dmg + ' 点伤害。');
+      if (target.hp <= 0) { target.alive = false; log.push(foeName(target) + '倒下不再动弹。'); }
+    });
+  }
+  // 同伴受创：降到 30% 以下自动撤出（不死），本场不再回来，当日同行结束（好感 -2）
+  function allyTakeHit(u, dmg) {
+    var log = S().combat.log;
+    u.hp -= dmg;
+    log.push('[npc:' + u.id + ']' + u.name + '[/npc]替你挨了一下，受到 ' + dmg + ' 点伤害。');
+    if (u.hp <= u.maxHp * 0.3) {
+      u.retreated = true;
+      log.push('[npc:' + u.id + ']' + u.name + '[/npc]伤得不轻，咬牙退出了战圈。');
+      if (G.engine.companionEnd) G.engine.companionEnd('retreat');   // 清 world.companion + 好感 -2
+    }
+  }
 
   function playerAttack(heavy) {
     var combat = S().combat, log = combat.log;
@@ -212,6 +251,7 @@
     var maxSpeed = alive.length ? Math.max.apply(null, alive.map(function (e) { return e.speed; })) : 1;
     var chance = C.fleeBase + (energy - 50) / 100 - maxSpeed * 0.1;
     if (G.engine.isOverweight()) chance -= 0.4;                 // 超重难以脱身
+    if (G.engine.companionFleeBonus) chance += G.engine.companionFleeBonus();  // M18：侦察位（灰猫）同行 +0.15
     return G.engine.clamp(chance, 0.05, 0.95);
   }
 
@@ -219,7 +259,10 @@
     var log = S().combat.log;
     var chance = fleeChance();
     G.engine.statAdd('energy', -5);
-    if (Math.random() < chance) { log.push('你抓住空档拔腿就跑，甩开了它们。'); return true; }
+    if (Math.random() < chance) {
+      if (G.engine.statTick) G.engine.statTick('flees');   // M16 埋点：成功逃跑计数
+      log.push('你抓住空档拔腿就跑，甩开了它们。'); return true;
+    }
     log.push('你想逃，却被拦了下来。');
     return false;
   }
@@ -252,6 +295,12 @@
     combat.enemies.forEach(function (e) {
       if (!e.alive) return;
       if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
+      // M18：有存活同伴时，敌人每次按 50/50 分配目标——打同伴则走同伴受创（无护甲/防御加成）
+      var allies = livingAllies();
+      if (allies.length && Math.random() < 0.5) {
+        allyTakeHit(allies[Math.floor(Math.random() * allies.length)], rand(e.dmg[0], e.dmg[1]));
+        return;
+      }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
       // M14 护甲：全身 armor 合计换算成固定减伤（下限 1，不抵消防御的价值）
@@ -327,6 +376,13 @@
       }
     });
     s._defeatLoss = { bullets: lostBullets, items: lostItems };   // 易失，仅供醒来文本
+    // M18：人类战败非死亡时，同伴一并被打散（丧尸战败仍走死亡，到不了这里）
+    var comp = G.engine.companionState && G.engine.companionState();
+    if (comp) {
+      var cd = G.data.npcs && G.data.npcs[comp.id];
+      s._defeatCompanion = (cd && cd.name) || comp.id;
+      G.engine.companionEnd('defeat');
+    } else { s._defeatCompanion = null; }
     s.world.flags.thugDefeats = (s.world.flags.thugDefeats || 0) + 1;
     // 重伤昏迷：先把 hp 立回 15 再挨过昏迷时间（3 小时的饥渴消耗压不死 15 点血）
     G.engine.statSet('hp', 15);
@@ -341,7 +397,11 @@
     var combat = S().combat;
     combat.over = true;
     combat.result = result;
-    if (result === 'win') grantLoot();
+    if (result === 'win') {
+      grantLoot();
+      // M16 埋点：胜利时逐个敌人登记击杀数
+      if (G.engine.statTick) combat.enemies.forEach(function (e) { G.engine.statTick('kills', e.id); });
+    }
 
     // 续接路由（回调优先，其次 returnPassage，最后回地点）
     if (result === 'lose') {
@@ -383,6 +443,9 @@
     }
 
     if (fled) { var flog = combat.log.slice(); endCombat('flee'); return { status: 'flee', log: flog, state: null }; }
+
+    // M18：玩家行动后，同伴自动攻击（可能补刀，逃跑除外）
+    allyTurn();
 
     if (allDead()) { combat.log.push('战斗结束。'); var wlog = combat.log.slice(); endCombat('win'); return { status: 'win', log: wlog, state: null }; }
 

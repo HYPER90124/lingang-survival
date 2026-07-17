@@ -18,6 +18,7 @@
   var enemies = {
     zombie_shambler: {
       name: '跛行者', hp: 30, dmg: [5, 12], speed: 2, infect: 0.15,
+      hint: '最常见的行尸，动作迟缓，逃跑不难；成群时才棘手。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }] },
       descPool: [
         '[zed]跛行者[/zed]拖着腐烂的腿扑过来死死咬住你的手臂',
@@ -28,6 +29,7 @@
     },
     zombie_runner: {
       name: '奔跑者', hp: 25, dmg: [6, 14], speed: 5, infect: 0.2,
+      hint: '血少但极快，几乎逃不掉，宜先手速杀；入冬会迟钝一档。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.2 }] },
       descPool: [
         '[zed]奔跑者[/zed]猛地扑近一口咬在你肩头',
@@ -38,6 +40,7 @@
     },
     zombie_bloat: {
       name: '肿胀者', hp: 55, dmg: [8, 16], speed: 1, infect: 0.35,
+      hint: '血厚、感染率高，被咬极易染病；速度慢，可放风筝耗死。',
       loot: { drops: [{ id: 'scrapmetal', count: 1, chance: 0.25 }] },
       descPool: [
         '[zed]肿胀者[/zed]一巴掌浮肿的手掌拍在你身上',
@@ -48,6 +51,7 @@
     },
     zombie_dog: {
       name: '犬尸', hp: 18, dmg: [4, 10], speed: 6, infect: 0.25,
+      hint: '全场最快，成群出没；血极薄，一两击可解决，就怕被围。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.15 }] },
       descPool: [
         '[zed]犬尸[/zed]窜上来一口咬住你的脚踝',
@@ -58,6 +62,7 @@
     },
     zombie_crawler: {
       name: '爬行者', hp: 20, dmg: [3, 9], speed: 1, infect: 0.2,
+      hint: '拖着残躯贴地伏击，速度慢、伤害低，最好对付；多藏在暗处。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.25 }] },
       descPool: [
         '[zed]爬行者[/zed]从地上猛地探身咬住你的脚',
@@ -68,6 +73,7 @@
     },
     zombie_screecher: {
       name: '尖啸者', hp: 22, dmg: [5, 11], speed: 3, infect: 0.18,
+      hint: '尖叫会引来同类改道包抄，尸潮夜尤其危险，宜速战速决。',
       loot: { drops: [{ id: 'bandage', count: 1, chance: 0.15 }] },
       descPool: [
         '[zed]尖啸者[/zed]尖叫着扑近一口咬住你的耳侧',
@@ -78,6 +84,7 @@
     },
     thug_grunt: {
       name: '屠夫帮杂兵', human: true, hp: 35, dmg: [7, 15], speed: 3, infect: 0,
+      hint: '屠夫帮的爪牙，会掉子弹；活人不传染，也能靠嘴皮子（色诱/贿赂/虚张）绕过。',
       loot: {
         bullets: { chance: 0.6, min: 2, max: 6 },
         drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }]
@@ -91,6 +98,7 @@
     },
     thug_brute: {
       name: '屠夫帮打手', human: true, hp: 60, dmg: [10, 20], speed: 2, infect: 0,
+      hint: '屠夫帮的重装打手，血厚拳沉，掉落丰厚；硬拼前先备好防御与药。',
       loot: {
         bullets: { chance: 0.7, min: 4, max: 10 },
         drops: [
@@ -103,6 +111,21 @@
         '屠夫帮打手一记重拳砸在你脸上',
         '屠夫帮打手揪住你的衣领狠狠一肘砸下',
         '屠夫帮打手抡棍横扫砸在你腰上'
+      ]
+    },
+    // M19：屠夫帮货运头子（收网战役第三幕专属，campaign.js 的 thug_boss_pack 使用）
+    thug_boss: {
+      name: '孟九', human: true, hp: 80, dmg: [10, 18], speed: 3, infect: 0,
+      hint: '屠夫帮的货运头子，老秦带出来的旧部；出手又快又狠，招招照着要害去。',
+      loot: {
+        bullets: { chance: 1, min: 10, max: 15 },
+        drops: [{ id: 'militaryfirstaid', count: 1, chance: 0.5 }]
+      },
+      descPool: [
+        '孟九侧身让过你的攻势，枪把子反手砸在你太阳穴上',
+        '孟九一脚踩住你的脚背，肘尖狠狠顶进你胸口',
+        '孟九贴身欺近，短刀在你小臂上豁开一道口子',
+        '孟九抓住你的衣领，把你整个人抡在路障上'
       ]
     }
   };
@@ -119,6 +142,7 @@
     screecher_horde:   ['zombie_screecher', 'zombie_shambler', 'zombie_shambler'],
     thug_patrol:       ['thug_grunt', 'thug_grunt'],
     thug_squad:        ['thug_grunt', 'thug_brute'],
+    thug_boss_pack:    ['thug_boss', 'thug_grunt'],
     metro_horde:       ['zombie_runner', 'zombie_crawler', 'zombie_shambler']
   };
   Object.keys(encounters).forEach(function (id) { G.data.encounters[id] = encounters[id]; });

@@ -8,7 +8,8 @@
  *      毒瘾发作日 addict_attack_1（addiction>50，scheduled 每日一次，三分支）、
  *      感染濒死线 infect_crit_1（infection>80，高优先级反复催命，医院可救治）
  *   3. 全局周期：尸潮夜链（horde_warn 预警→日历 eventId 强制触发 horde_night_start
- *      → 尸潮遭遇池 horde_enc_1/2 + 室内 horde_safe_1 → 05:00 horde_night_end 收尾）、
+ *      → 尸潮遭遇池 horde_enc_1/2 + 室内 horde_safe_1（M17：home 加固门窗后走 horde_safe_door
+ *      安心变体，优先级更高）→ 05:00 horde_night_end 收尾）、
  *      雨天（rain_start 上午随机开雨 → rain_harvest/rain_amb 加成与氛围 → 20:00 rain_end）
  *   4. 屠夫帮世界线：butcher_world_1~4（读 qin/mao 线 flag 出文案变体，不写剧情 flag）
  *
@@ -172,8 +173,9 @@
   ]);
   ev('enc_metro_2', { loc: 'metro', chance: 0.18 }, 360, 'enc_metro_2_p');
 
-  P('rare_metro_1_p', '轨道下的检修坑里翻出一只军用背囊，帆布都朽了，里面的东西却还结实：成排的[item]子弹[/item]，一只没拆封的[med]军用急救包[/med]。撤离的兵没能带走它。', [
-    { label: '收下这份遗物', fx: { bullets: 15, item: { militaryfirstaid: 1 }, stat: { sanity: -1 }, time: 15 } }
+  P('rare_metro_1_p', '轨道下的检修坑里翻出一只军用背囊，帆布都朽了，里面的东西却还结实：成排的[item]子弹[/item]，一只没拆封的[med]军用急救包[/med]。背囊侧袋还塞着一台[item]收音机[/item]，屏面裂了道缝，不知道还响不响。撤离的兵没能带走它。', [
+    // M16：军急救包/子弹稳出；收音机小概率还能用（roll 0.3），坏了就当废铁没捡
+    { label: '收下这份遗物', fx: { bullets: 15, item: { militaryfirstaid: 1 }, stat: { sanity: -1 }, time: 15, roll: { chance: 0.3, win: { item: { radio: 1 } }, lose: {} } } }
   ]);
   ev('rare_metro_1', { loc: 'metro', chance: 0.04 }, 4320, 'rare_metro_1_p');
 
@@ -463,6 +465,19 @@
     },
     [{ label: '记下这个日子', fx: { flag: { 'world.hordeAlert': true }, appointment: { inDays: 1, minute: 1230, label: '尸潮夜（预警：锁门闭户）', eventId: 'horde_night_start' }, stat: { sanity: -3 } } }]);
 
+  // ---- 尸潮夜：收音机变体（M16 收音机效果②） ---------------------------------
+  // 带收音机时，预警提前到当日上午（同样登记次日 20:30 强制开场）——多出的半天用来备战。
+  // 上午先触发本条并置 hordeAlert=true，则常规 horde_warn（cond hordeAlert:false）当日不再命中，两条互斥。
+  events.register({
+    id: 'horde_warn_radio', type: 'random', when: ['tick', 'enter'], priority: 5, cooldown: 8640,
+    cond: { timeRange: [300, 1020], chance: 0.08, has: { item: 'radio' }, flag: { 'world.hordeNight': false, 'world.hordeAlert': false } },
+    passage: 'horde_warn_radio_p1'
+  });
+
+  P('horde_warn_radio_p1',
+    '清晨的[item]收音机[/item]忽然切断了常规节目，一段加急通报反复播送：“紧急播报——北面居民区观测到大规模移动，规模极大，方向入城。预计明晚过境。请所有幸存者今日之内备足物资、加固门窗、入夜后熄灯闭户。重复一遍……”一整天的预备时间，比往常从傍晚才听到消息，宽裕得多。',
+    [{ label: '趁天亮抓紧备战', fx: { flag: { 'world.hordeAlert': true }, appointment: { inDays: 1, minute: 1230, label: '尸潮夜（收音机预警：锁门闭户）', eventId: 'horde_night_start' }, stat: { sanity: -2 } } }]);
+
   // ---- 尸潮夜：开场（仅由日历 eventId 强制触发；when:[] 不入常规池） ----------
   events.register({ id: 'horde_night_start', type: 'story', when: [], once: false, priority: 9, passage: 'horde_night_start_p1' });
 
@@ -505,6 +520,12 @@
     { label: '用被子蒙住头', fx: { stat: { sanity: -2 }, time: 60 } }
   ]);
   ev('horde_safe_1', { anyOf: [{ loc: 'home' }, { loc: 'bar' }, { loc: 'church' }], chance: 0.5, flag: { 'world.hordeNight': true } }, 120, 'horde_safe_1_p', 5, ['enter', 'action', 'tick']);
+
+  // ---- 尸潮夜：加固门窗后的安心变体（M17，仅 home 且已修「加固门窗」，优先级高于 horde_safe_1） ----
+  P('horde_safe_door_p', '潮声隔着这扇钉死的窗棂闷闷地滚过去，缝隙都用废铁和胶带堵严实了，屋里没有一丝风灌进来。你反倒睡了个踏实觉。', [
+    { label: '（安稳地等它过去）', fx: { stat: { sanity: 2 }, time: 60 } }
+  ]);
+  ev('horde_safe_door', { loc: 'home', homeUpg: { door: true }, chance: 0.5, flag: { 'world.hordeNight': true } }, 120, 'horde_safe_door_p', 6, ['enter', 'action', 'tick']);
 
   // ---- 尸潮夜：收尾（仅由日历 eventId 强制触发） ------------------------------
   events.register({ id: 'horde_night_end', type: 'story', when: [], once: false, priority: 9, passage: 'horde_night_end_p1' });
@@ -568,7 +589,8 @@
         fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
       { label: '压低帽檐绕开', fx: { stat: { sanity: -2 } } }
     ]);
-  ev('butcher_world_1', { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12 }, 1440, 'butcher_world_1_p', 1);
+  // M19：屠夫帮倒台（world.butcherFallen）后本组事件停用，换 campaign.js 的 aftermath 变体
+  ev('butcher_world_1', { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_1_p', 1);
 
   P('butcher_world_2_p',
     function () {
@@ -584,7 +606,7 @@
       { label: '记下船开走的方向', fx: { stat: { sanity: -1 }, time: 15 } },
       { label: '不宜久留，撤', fx: {} }
     ]);
-  ev('butcher_world_2', { loc: 'dock', chance: 0.12 }, 1440, 'butcher_world_2_p', 1);
+  ev('butcher_world_2', { loc: 'dock', chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_2_p', 1);
 
   P('butcher_world_3_p',
     function () {
@@ -601,7 +623,7 @@
       { label: '撕掉告示', fx: { stat: { sanity: 2 } } },
       { label: '看过就走', fx: { stat: { sanity: -2 } } }
     ]);
-  ev('butcher_world_3', { anyOf: [{ loc: 'sewer' }, { loc: 'dock' }, { loc: 'residential' }], chance: 0.1 }, 2880, 'butcher_world_3_p', 1);
+  ev('butcher_world_3', { anyOf: [{ loc: 'sewer' }, { loc: 'dock' }, { loc: 'residential' }], chance: 0.1, flag: { 'world.butcherFallen': false } }, 2880, 'butcher_world_3_p', 1);
 
   P('butcher_world_4_p',
     function () {
@@ -615,6 +637,6 @@
       { label: '趁乱摸走他们撂下的物资', fx: { item: { cannedfood: 1 }, bullets: 3, stat: { sanity: -2 }, time: 10 } },
       { label: '别蹚浑水，绕开', fx: {} }
     ]);
-  ev('butcher_world_4', { loc: 'mall', chance: 0.12 }, 1440, 'butcher_world_4_p', 1);
+  ev('butcher_world_4', { loc: 'mall', chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_4_p', 1);
 
 })();

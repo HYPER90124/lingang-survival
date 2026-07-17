@@ -30,6 +30,7 @@ const SCRIPTS = [
   'js/data/story/intro.js', 'js/data/story/qin.js', 'js/data/story/lin.js', 'js/data/story/mao.js',
   'js/data/story/secondary.js', 'js/data/story/minor.js', 'js/data/story/worldevents.js',
   'js/data/story/dol.js', 'js/data/story/clothing.js', 'js/data/story/season.js',
+  'js/data/story/grime.js', 'js/data/story/campaign.js',
   'js/engine/main.js'
 ];
 

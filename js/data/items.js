@@ -207,6 +207,7 @@
     toolkit: { name: '工具箱', type: 'material', desc: '一只小工具箱，扳手螺丝刀配得七零八落。', price: 20, weight: 3 },
     sewingkit: { name: '针线包', type: 'material', desc: '一只针线包，配着几卷线和补丁布，能把撕破的衣物缝补如初。', price: 8, weight: 1 }, // M14：修补服装耐久
     firewood: { name: '柴火', type: 'material', desc: '一捆劈好的干柴，够生一小堆火。入冬后在外头烤火驱寒，是长时间外勤的命根子。', price: 3, weight: 3 }, // M15：室外「生火取暖」消耗，大幅消退寒冷
+    radio: { name: '收音机', type: 'material', desc: '一台掉漆的便携收音机，旋钮松垮，勉强能收到临港之声的频段。带着它，广播里的坏消息也能早半天听见。', price: 30, weight: 3 }, // M16：带在身上即生效——周三晚远程收听周响广播、尸潮当日上午提前预警（读 hasItem('radio')）
 
     // ---- clothing ×18（三槽：上装 top / 下装 bottom / 鞋 shoes） ------------
     // 字段：slot / warmth(保暖,M15) / armor(减伤) / decency(体面) / durMax(耐久)。

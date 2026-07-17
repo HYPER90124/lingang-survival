@@ -60,7 +60,22 @@
     // 寒冷阈值（照感染/毒瘾的既有阈值模式）
     T_COLD_CAP: 50,        // cold > 此值精力上限随寒冷值等量下降
     T_COLD_HP:  80,        // cold > 此值每 10 分钟掉血（失温）
-    coldHpPer10: 0.5
+    coldHpPer10: 0.5,
+
+    // ---- M16 清洁度（脏污） -------------------------------------------------
+    // 只做氛围不做硬惩罚：累积搜刮/战斗/下水道，消退靠洗漱；阈值仅触发嫌弃文本/送礼失效。
+    grimeScavenge: 3,      // 每次搜刮累积
+    grimeCombat:   5,      // 每场战斗累积（startCombat 一次）
+    grimeSewer:   10,      // 经过或搜刮下水道累积（覆盖普通搜刮值）
+    grimeWashFloor: 40,    // 无水擦洗只能降到此值（有水则清零）
+    T_GRIME: 70,           // grime > 此值：NPC 嫌弃变体、送礼 +1 档失效、高脏污事件
+
+    // ---- M17 家园升级 --------------------------------------------------------
+    homeRainYield: 2,        // 雨水收集器：雨天跨日结算自动产出（份 rainwater）
+    gardenIntervalDays: 2,   // 小菜园：收获间隔（天）
+    gardenYield: 1,          // 小菜园：每次收获份数（wildveggie）
+    homeStorageCap: 60,      // 储物柜容量上限（重量），防无限囤积
+    homeSleepDoorBonus: 0.10 // 加固门窗：在家睡眠精力恢复加成比例
   };
   G.TUNE = TUNE;
 
@@ -178,6 +193,25 @@
       sc[loc] = Math.max(0, sc[loc] - TUNE.scavengeRegenPerDay);
       if (sc[loc] === 0) delete sc[loc];
     }
+    // M17：家园被动产出（雨水收集器/小菜园），读 world.homeUpg，纯追加逻辑，
+    // 产出走 G.engine.homeAutoStore（有储物柜且未满则入柜不计负重，否则进背包）。
+    var w = S().world;
+    var hu = w && w.homeUpg;
+    if (hu) {
+      if (hu.rain && w._rainedToday) G.engine.homeAutoStore('rainwater', TUNE.homeRainYield);
+      if (hu.garden) {
+        var gd = w.gardenDay == null ? S().player.day : w.gardenDay;
+        if (S().player.day - gd >= TUNE.gardenIntervalDays) {
+          G.engine.homeAutoStore('wildveggie', TUNE.gardenYield);
+          w.gardenDay = S().player.day;
+        }
+      }
+    }
+    if (w) w._rainedToday = false;
+
+    // M18：同行到当日 24:00 自动散伙（跨日结算即午夜）
+    if (G.engine.companionMidnight) G.engine.companionMidnight();
+
     // scheduled 事件按 weekday 调度 + 毒瘾发作等由事件层在 'tick' 时机统一命中；
     // 这里仅清理「每日已触发」标记，供 events.js 的 scheduled 去重。
     S().world._firedDay = {};
@@ -206,6 +240,10 @@
       G.engine.statAdd('hunger', -TUNE.hungerPer10);
       G.engine.statAdd('thirst', -TUNE.thirstPer10);
       if (!opts.sleeping) G.engine.statAdd('energy', -TUNE.energyPer10);
+
+      // M17：记录「当日下过雨」供雨水收集器跨日结算读取——world.rainDay 在 20:00
+      // 就被 rain_end 清掉，早于跨日结算（00:00），故需要一个不被同日清空的标记。
+      if (S().world && G.engine.getFlag('world.rainDay')) S().world._rainedToday = true;
 
       // M15 寒冷累积/消退（睡眠也照常，室内会消退，露宿则继续挨冻）
       coldStep(p);
@@ -243,7 +281,11 @@
   // 安全屋睡觉按小时恢复精力/少量 hp；跨日的毒瘾/感染结算由 advance→dayRollover 处理。
   function sleep(hours) {
     var res = advance(hours * 60, { sleeping: true });
-    G.engine.statAdd('energy', TUNE.sleepEnergyPerHour * hours);
+    // M17：加固门窗后在家睡眠精力恢复 +10%（仅安全屋，睡觉行动本就只在 home 可触发）
+    var w = S().world;
+    var mult = (S().player.location === 'home' && w && w.homeUpg && w.homeUpg.door)
+      ? (1 + (TUNE.homeSleepDoorBonus || 0)) : 1;
+    G.engine.statAdd('energy', TUNE.sleepEnergyPerHour * hours * mult);
     G.engine.statAdd('hp', TUNE.sleepHpPerHour * hours);
     if (G.engine.checkEvents) G.engine.checkEvents('sleep');
     return res;

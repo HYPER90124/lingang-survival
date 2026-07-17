@@ -309,6 +309,21 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .export-box { width: 100%; min-height: 80px; background: var(--bg-card); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; resize: vertical; }
 .about-text { font-size: 13px; color: var(--fg-dim); margin-top: 16px; }
 
+/* ---- 档案（生存统计 + 敌人图鉴，M16） ------------------------------------------ */
+.codex-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.codex-stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.codex-stat-label { font-size: 12px; color: var(--fg-dim); }
+.codex-stat-val { color: var(--fg-bright); font-variant-numeric: tabular-nums; }
+.codex-progress { font-size: 13px; color: var(--fg-dim); margin-bottom: 8px; }
+.codex-enemies { display: flex; flex-direction: column; gap: 8px; }
+.codex-enemy { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.codex-enemy.unseen { opacity: .55; }
+.codex-enemy-head { display: flex; justify-content: space-between; align-items: baseline; }
+.codex-enemy-name { color: var(--fg-bright); }
+.codex-enemy.unseen .codex-enemy-name { color: var(--fg-dim); letter-spacing: .15em; }
+.codex-enemy-kills { font-size: 12px; color: var(--tag-item); font-variant-numeric: tabular-nums; }
+.codex-enemy-hint { font-size: 13px; color: var(--fg-dim); margin-top: 4px; line-height: 1.5; }
+
 /* ---- 战斗界面 ------------------------------------------------------------------ */
 .combat-screen { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .enemy-row { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 16px 0; }
@@ -317,6 +332,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .enemy-card .ename { color: var(--tag-zed); margin-bottom: 4px; }
 .enemy-card .hp-track { height: 6px; border-radius: 3px; background: #302d29; overflow: hidden; }
 .enemy-card .hp-fill { height: 100%; background: var(--danger); }
+/* M18 同伴单位：整行留白区分敌我 + 绿色血条 */
+.ally-row { padding-top: 8px; }
+.ally-card { border-color: rgba(105, 176, 162, .5); }
+.enemy-card .hp-fill.ally { background: #69b0a2; }
 .combat-log { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; min-height: 120px; }
 .combat-log .line { color: var(--fg); }
 .combat-log .line.turn-sep { color: var(--fg-dim); font-size: 12px; margin-top: 4px; border-top: 1px dashed var(--border); padding-top: 6px; }
@@ -449,7 +468,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         location: 'home',
         stats: { hp: 100, hunger: 70, thirst: 70, energy: 80,
                  sanity: 80, alcohol: 0, addiction: 0, infection: 0,
-                 cold: 0 },   // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
+                 cold: 0,     // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
+                 grime: 0 },  // M16：脏污值（0–100），搜刮/战斗/下水道累积，洗漱清零
         bullets: 20,
         weapon: null,                 // {id, durability}
         outfit: initialOutfit(gender),// M14：三槽服装 {top,bottom,shoes}，每槽 {id,dur}|null
@@ -458,9 +478,17 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         flags: {}
       },
       npcs: npcs,
-      world: { flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn' }, // _firedDay: scheduled 每日去重；season: M15 季节缓存
+      world: {
+        flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn', // _firedDay: scheduled 每日去重；season: M15 季节缓存
+        codex: { enemies: {} },                                     // M16：已见敌人图鉴 {enemyId: true}
+        stats: { kills: {}, scavenges: 0, fights: 0, flees: 0 },    // M16：生存统计
+        homeUpg: { door: false, rain: false, garden: false, storage: false }, // M17：家园四项升级
+        gardenDay: null,                                             // M17：小菜园最近收获日（未建为 null）
+        companion: null                                              // M18：当前同行 NPC {id, until}（absMinute 截止），无则 null
+      },
       calendar: { appointments: [], milestones: [] },
-      scavenge: {}
+      scavenge: {},
+      homeStorage: []   // M17：家园储物柜，{id,count}，不计负重（需先修「打造储物柜」解锁 UI）
     };
   }
   G.engine.newGame = newGame;
@@ -487,6 +515,33 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.engine.statGet = statGet;
   G.engine.statSet = statSet;
   G.engine.statAdd = statAdd;
+
+  // ---- M16 图鉴 / 生存统计埋点（纯数据写入，供 combat/scavenge 调用，不改战斗流程） ----
+  function worldCodex() {
+    var w = S().world;
+    if (!w.codex) w.codex = { enemies: {} };
+    if (!w.codex.enemies) w.codex.enemies = {};
+    return w.codex;
+  }
+  function worldStats() {
+    var w = S().world;
+    if (!w.stats) w.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (!w.stats.kills) w.stats.kills = {};
+    return w.stats;
+  }
+  // 登记已见敌人（startCombat 埋点）
+  function codexSee(id) { if (id) worldCodex().enemies[id] = true; }
+  // 生存统计计数：kind ∈ 'kills'(需 id)|'scavenges'|'fights'|'flees'
+  function statTick(kind, id) {
+    var st = worldStats();
+    if (kind === 'kills') { if (id) st.kills[id] = (st.kills[id] || 0) + 1; return; }
+    if (typeof st[kind] !== 'number') st[kind] = 0;
+    st[kind] += 1;
+  }
+  G.engine.codexSee = codexSee;
+  G.engine.statTick = statTick;
+  G.engine.worldStats = worldStats;
+  G.engine.worldCodex = worldCodex;
 
   // ---- 标记路径解析 -------------------------------------------------------
   // 返回 {obj, key}，getFlag/setFlag 共用
@@ -593,6 +648,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var p = S().player, cap = CARRY_BASE;
     if (p.skills.packmule) cap += 10;      // 预留：负重技能（数据层定义）
     if (p.flags.carryBonus) cap += p.flags.carryBonus;
+    if (companionActive()) cap += 10;      // M18：同行者帮拿，负重上限 +10
     return cap;
   }
   function isOverweight() { return invWeight() > carryCap(); }
@@ -604,6 +660,92 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.engine.invWeight = invWeight;
   G.engine.carryCap = carryCap;
   G.engine.isOverweight = isOverweight;
+
+  // ---- 家园仓储（M17） ------------------------------------------------------
+  // homeStorage 结构与 player.inventory 同构（{id,count}）；只收纳无独立耐久的物资
+  // （武器/服装类拒收，避免装备语义复杂化），寄存物不计入 invWeight/carryCap。
+  // 容量上限走 TUNE.homeStorageCap（重量），由「打造储物柜」升级解锁 UI 后才可用。
+  function homeStorageList() { return S().homeStorage || (S().homeStorage = []); }
+  function homeStorageEntry(id) {
+    var st = homeStorageList();
+    for (var i = 0; i < st.length; i++) if (st[i].id === id) return st[i];
+    return null;
+  }
+  function homeStorageCount(id) { var e = homeStorageEntry(id); return e ? e.count : 0; }
+  function homeStorageAdd(id, n) {
+    n = (n == null) ? 1 : n;
+    if (n <= 0) return;
+    var e = homeStorageEntry(id);
+    if (e) e.count += n; else homeStorageList().push({ id: id, count: n });
+  }
+  function homeStorageRemove(id, n) {
+    n = (n == null) ? 1 : n;
+    if (n <= 0) return;
+    var st = homeStorageList();
+    var e = homeStorageEntry(id);
+    if (!e) return;
+    e.count -= n;
+    if (e.count <= 0) { var idx = st.indexOf(e); if (idx >= 0) st.splice(idx, 1); }
+  }
+  function homeStorageWeight() {
+    var st = homeStorageList(), total = 0;
+    for (var i = 0; i < st.length; i++) {
+      var def = itemDef(st[i].id);
+      total += (def ? (def.weight || 0) : 0) * st[i].count;
+    }
+    return total;
+  }
+  function homeStorageCap() { return (G.TUNE && G.TUNE.homeStorageCap != null) ? G.TUNE.homeStorageCap : 60; }
+  // 存入：背包→柜（武器/服装拒收；超容拒绝，返回 msg 供 UI toast）
+  function homeStorageDeposit(id, n) {
+    n = (n == null) ? 1 : n;
+    var def = itemDef(id);
+    if (def && (def.type === 'weapon' || def.type === 'clothing')) return { ok: false, msg: '武器和服装存不进储物柜。' };
+    if (countItem(id) < n) return { ok: false, msg: '背包里没有这么多。' };
+    var addWeight = (def ? (def.weight || 0) : 0) * n;
+    if (homeStorageWeight() + addWeight > homeStorageCap()) return { ok: false, msg: '储物柜装不下了。' };
+    removeItem(id, n);
+    homeStorageAdd(id, n);
+    return { ok: true };
+  }
+  // 取出：柜→背包（不受负重上限阻拦，超重后照 isOverweight 既有规则处理）
+  function homeStorageWithdraw(id, n) {
+    n = (n == null) ? 1 : n;
+    if (homeStorageCount(id) < n) return { ok: false, msg: '储物柜里没有这么多。' };
+    homeStorageRemove(id, n);
+    addItem(id, n);
+    return { ok: true };
+  }
+  // 被动产出（雨水收集器/小菜园）优先入柜，未建储物柜或已满则直接进背包（超重照常规规则处理）
+  function homeAutoStore(id, n) {
+    var w = S().world;
+    if (w && w.homeUpg && w.homeUpg.storage) {
+      var def = itemDef(id);
+      var addWeight = (def ? (def.weight || 0) : 0) * n;
+      if (homeStorageWeight() + addWeight <= homeStorageCap()) { homeStorageAdd(id, n); return 'storage'; }
+    }
+    addItem(id, n);
+    return 'bag';
+  }
+  G.engine.homeStorageCount = homeStorageCount;
+  G.engine.homeStorageAdd = homeStorageAdd;
+  G.engine.homeStorageRemove = homeStorageRemove;
+  G.engine.homeStorageWeight = homeStorageWeight;
+  G.engine.homeStorageCap = homeStorageCap;
+  G.engine.homeStorageDeposit = homeStorageDeposit;
+  G.engine.homeStorageWithdraw = homeStorageWithdraw;
+  G.engine.homeAutoStore = homeAutoStore;
+
+  // ---- 同行（M18） --------------------------------------------------------
+  // world.companion = {id, until}（until 为 absMinute 截止时刻，当日 24:00）。
+  // 这里只放「状态模型」读取；邀请/解散/战斗单位构建等逻辑在 npcs.js / combat.js，
+  // 便于 M19 战役按 id 复用（world.companion 是唯一事实源）。
+  function companionState() { var w = S() && S().world; return (w && w.companion) || null; }
+  function companionActive() { return !!companionState(); }
+  function companionId() { var c = companionState(); return c ? c.id : null; }
+  G.engine.companionState = companionState;
+  G.engine.companionActive = companionActive;
+  G.engine.companionId = companionId;
 
   // ---- 服装（M14） --------------------------------------------------------
   // 开局按性别发一套垫底基础装（worn 系列）。老档迁移走 save.js DEFAULT_OUTFIT。
@@ -759,6 +901,18 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       var mn = s.npcs[cond.met]; if (!mn || !mn.met) return false;
     }
     if ('decency' in cond && !cmp(outfitDecency(), cond.decency)) return false;  // M14：着装体面合计
+    if ('homeUpg' in cond) {                                        // M17：家园升级门 {door|rain|garden|storage: bool}
+      var hu = s.world.homeUpg || {};
+      for (var hk in cond.homeUpg) {
+        if (!!cond.homeUpg[hk] !== !!hu[hk]) return false;
+      }
+    }
+    if ('companion' in cond) {                                      // M18：是否有同行者（true/false，或指定 id）
+      var comp = s.world && s.world.companion;
+      if (cond.companion === true && !comp) return false;
+      if (cond.companion === false && comp) return false;
+      if (typeof cond.companion === 'string' && (!comp || comp.id !== cond.companion)) return false;
+    }
 
     // chance 放最后：只有其余条件全过才掷骰，避免浪费判定
     if ('chance' in cond && Math.random() >= cond.chance) return false;
@@ -888,7 +1042,22 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     // 寒冷阈值（照感染/毒瘾的既有阈值模式）
     T_COLD_CAP: 50,        // cold > 此值精力上限随寒冷值等量下降
     T_COLD_HP:  80,        // cold > 此值每 10 分钟掉血（失温）
-    coldHpPer10: 0.5
+    coldHpPer10: 0.5,
+
+    // ---- M16 清洁度（脏污） -------------------------------------------------
+    // 只做氛围不做硬惩罚：累积搜刮/战斗/下水道，消退靠洗漱；阈值仅触发嫌弃文本/送礼失效。
+    grimeScavenge: 3,      // 每次搜刮累积
+    grimeCombat:   5,      // 每场战斗累积（startCombat 一次）
+    grimeSewer:   10,      // 经过或搜刮下水道累积（覆盖普通搜刮值）
+    grimeWashFloor: 40,    // 无水擦洗只能降到此值（有水则清零）
+    T_GRIME: 70,           // grime > 此值：NPC 嫌弃变体、送礼 +1 档失效、高脏污事件
+
+    // ---- M17 家园升级 --------------------------------------------------------
+    homeRainYield: 2,        // 雨水收集器：雨天跨日结算自动产出（份 rainwater）
+    gardenIntervalDays: 2,   // 小菜园：收获间隔（天）
+    gardenYield: 1,          // 小菜园：每次收获份数（wildveggie）
+    homeStorageCap: 60,      // 储物柜容量上限（重量），防无限囤积
+    homeSleepDoorBonus: 0.10 // 加固门窗：在家睡眠精力恢复加成比例
   };
   G.TUNE = TUNE;
 
@@ -1006,6 +1175,25 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       sc[loc] = Math.max(0, sc[loc] - TUNE.scavengeRegenPerDay);
       if (sc[loc] === 0) delete sc[loc];
     }
+    // M17：家园被动产出（雨水收集器/小菜园），读 world.homeUpg，纯追加逻辑，
+    // 产出走 G.engine.homeAutoStore（有储物柜且未满则入柜不计负重，否则进背包）。
+    var w = S().world;
+    var hu = w && w.homeUpg;
+    if (hu) {
+      if (hu.rain && w._rainedToday) G.engine.homeAutoStore('rainwater', TUNE.homeRainYield);
+      if (hu.garden) {
+        var gd = w.gardenDay == null ? S().player.day : w.gardenDay;
+        if (S().player.day - gd >= TUNE.gardenIntervalDays) {
+          G.engine.homeAutoStore('wildveggie', TUNE.gardenYield);
+          w.gardenDay = S().player.day;
+        }
+      }
+    }
+    if (w) w._rainedToday = false;
+
+    // M18：同行到当日 24:00 自动散伙（跨日结算即午夜）
+    if (G.engine.companionMidnight) G.engine.companionMidnight();
+
     // scheduled 事件按 weekday 调度 + 毒瘾发作等由事件层在 'tick' 时机统一命中；
     // 这里仅清理「每日已触发」标记，供 events.js 的 scheduled 去重。
     S().world._firedDay = {};
@@ -1034,6 +1222,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       G.engine.statAdd('hunger', -TUNE.hungerPer10);
       G.engine.statAdd('thirst', -TUNE.thirstPer10);
       if (!opts.sleeping) G.engine.statAdd('energy', -TUNE.energyPer10);
+
+      // M17：记录「当日下过雨」供雨水收集器跨日结算读取——world.rainDay 在 20:00
+      // 就被 rain_end 清掉，早于跨日结算（00:00），故需要一个不被同日清空的标记。
+      if (S().world && G.engine.getFlag('world.rainDay')) S().world._rainedToday = true;
 
       // M15 寒冷累积/消退（睡眠也照常，室内会消退，露宿则继续挨冻）
       coldStep(p);
@@ -1071,7 +1263,11 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   // 安全屋睡觉按小时恢复精力/少量 hp；跨日的毒瘾/感染结算由 advance→dayRollover 处理。
   function sleep(hours) {
     var res = advance(hours * 60, { sleeping: true });
-    G.engine.statAdd('energy', TUNE.sleepEnergyPerHour * hours);
+    // M17：加固门窗后在家睡眠精力恢复 +10%（仅安全屋，睡觉行动本就只在 home 可触发）
+    var w = S().world;
+    var mult = (S().player.location === 'home' && w && w.homeUpg && w.homeUpg.door)
+      ? (1 + (TUNE.homeSleepDoorBonus || 0)) : 1;
+    G.engine.statAdd('energy', TUNE.sleepEnergyPerHour * hours * mult);
     G.engine.statAdd('hp', TUNE.sleepHpPerHour * hours);
     if (G.engine.checkEvents) G.engine.checkEvents('sleep');
     return res;
@@ -1160,8 +1356,22 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (cd && G.engine.absMinute() < cd) return false;
     // scheduled 每日只触发一次
     if (ev.type === 'scheduled' && s.world._firedDay[ev.id] === s.player.day) return false;
+    // M18：同伴外出期间，该 NPC 自己的 scheduled 事件（巡逻夜/义诊日等）不触发——人不在岗位上
+    if (ev.type === 'scheduled' && ev.npc && G.engine.companionId && G.engine.companionId() === ev.npc) return false;
     if (!G.engine.checkCond(ev.cond)) return false;
+    // M18：侦察位（灰猫）同行时，随机遇敌事件额外按 encMod 概率被绕开
+    if (ev.type === 'random' && G.engine.companionScoutActive && G.engine.companionScoutActive()
+        && eventLeadsToCombat(ev) && Math.random() < G.engine.companionEncMod()) return false;
     return true;
+  }
+
+  // 事件是否会引向战斗（其 passage 的任一选项 fx.combat）；结果缓存于事件对象（静态）。
+  function eventLeadsToCombat(ev) {
+    if (ev._leadsCombat != null) return ev._leadsCombat;
+    var lead = false, p = ev.passage && storyMap[ev.passage];
+    if (p && p.choices) lead = p.choices.some(function (c) { return c.fx && c.fx.combat; });
+    ev._leadsCombat = lead;
+    return lead;
   }
 
   function fireEvent(ev) {
@@ -1289,6 +1499,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   // ---- 进入地点 -----------------------------------------------------------
   function goLocation(locId) {
     S().player.location = locId;
+    // M18：回据点自动与同伴道别（在跑 enter 事件之前结束同行）
+    if (G.engine.companionOnArrive) G.engine.companionOnArrive(locId);
     var ev = checkEvents('enter');
     if (!ev && G.ui.showLocation) G.ui.showLocation();
     return ev;
@@ -1394,6 +1606,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var combat = {
       encounterId: encounterId,
       enemies: ids.map(makeEnemy),
+      allies: [],                     // M18：我方同伴单位（战斗型同行者，进场满血）
       defending: false,
       turn: 0,
       log: [],
@@ -1404,7 +1617,14 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       onLose: opts.onLose || null,
       onFlee: opts.onFlee || null
     };
+    // M18：把当前战斗型同行者作为我方第二单位加入（侦察位不参战，返回 null）
+    var ally = G.engine.companionCombatUnit ? G.engine.companionCombatUnit() : null;
+    if (ally) { combat.allies.push(ally); combat.log.push('[npc:' + ally.id + ']' + ally.name + '[/npc]与你并肩而立。'); }
     S().combat = combat;
+    // M16 埋点（纯数据写入，不改战斗流程）：登记敌人图鉴 + 战斗次数计数 + 脏污累积
+    if (G.engine.codexSee) combat.enemies.forEach(function (e) { G.engine.codexSee(e.id); });
+    if (G.engine.statTick) G.engine.statTick('fights');
+    if (G.TUNE && G.TUNE.grimeCombat) G.engine.statAdd('grime', G.TUNE.grimeCombat);
     if (G.ui.showCombat) G.ui.showCombat(combat);
     return combat;
   }
@@ -1452,6 +1672,37 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     return null;
   }
   function allDead() { return S().combat.enemies.every(function (e) { return !e.alive; }); }
+
+  // ---- M18 同伴单位 -------------------------------------------------------
+  function livingAllies() {
+    var a = S().combat.allies || [];
+    return a.filter(function (u) { return !u.retreated; });
+  }
+  // 同伴在玩家行动后自动攻击最靠前的敌人（AI 就打 firstAlive）
+  function allyTurn() {
+    var combat = S().combat, log = combat.log;
+    livingAllies().forEach(function (u) {
+      var target = firstAlive();
+      if (!target) return;
+      if (Math.random() > u.hit) { log.push('[npc:' + u.id + ']' + u.name + '[/npc]的攻击落了空。'); return; }
+      var dmg = rand(u.dmg[0], u.dmg[1]);
+      target.hp -= dmg;
+      var verb = u.role === 'gun' ? '一枪打中' : '一记狠招砸中';
+      log.push('[npc:' + u.id + ']' + u.name + '[/npc]' + verb + foeName(target) + '，造成 ' + dmg + ' 点伤害。');
+      if (target.hp <= 0) { target.alive = false; log.push(foeName(target) + '倒下不再动弹。'); }
+    });
+  }
+  // 同伴受创：降到 30% 以下自动撤出（不死），本场不再回来，当日同行结束（好感 -2）
+  function allyTakeHit(u, dmg) {
+    var log = S().combat.log;
+    u.hp -= dmg;
+    log.push('[npc:' + u.id + ']' + u.name + '[/npc]替你挨了一下，受到 ' + dmg + ' 点伤害。');
+    if (u.hp <= u.maxHp * 0.3) {
+      u.retreated = true;
+      log.push('[npc:' + u.id + ']' + u.name + '[/npc]伤得不轻，咬牙退出了战圈。');
+      if (G.engine.companionEnd) G.engine.companionEnd('retreat');   // 清 world.companion + 好感 -2
+    }
+  }
 
   function playerAttack(heavy) {
     var combat = S().combat, log = combat.log;
@@ -1514,6 +1765,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var maxSpeed = alive.length ? Math.max.apply(null, alive.map(function (e) { return e.speed; })) : 1;
     var chance = C.fleeBase + (energy - 50) / 100 - maxSpeed * 0.1;
     if (G.engine.isOverweight()) chance -= 0.4;                 // 超重难以脱身
+    if (G.engine.companionFleeBonus) chance += G.engine.companionFleeBonus();  // M18：侦察位（灰猫）同行 +0.15
     return G.engine.clamp(chance, 0.05, 0.95);
   }
 
@@ -1521,7 +1773,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var log = S().combat.log;
     var chance = fleeChance();
     G.engine.statAdd('energy', -5);
-    if (Math.random() < chance) { log.push('你抓住空档拔腿就跑，甩开了它们。'); return true; }
+    if (Math.random() < chance) {
+      if (G.engine.statTick) G.engine.statTick('flees');   // M16 埋点：成功逃跑计数
+      log.push('你抓住空档拔腿就跑，甩开了它们。'); return true;
+    }
     log.push('你想逃，却被拦了下来。');
     return false;
   }
@@ -1554,6 +1809,12 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     combat.enemies.forEach(function (e) {
       if (!e.alive) return;
       if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
+      // M18：有存活同伴时，敌人每次按 50/50 分配目标——打同伴则走同伴受创（无护甲/防御加成）
+      var allies = livingAllies();
+      if (allies.length && Math.random() < 0.5) {
+        allyTakeHit(allies[Math.floor(Math.random() * allies.length)], rand(e.dmg[0], e.dmg[1]));
+        return;
+      }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
       // M14 护甲：全身 armor 合计换算成固定减伤（下限 1，不抵消防御的价值）
@@ -1629,6 +1890,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       }
     });
     s._defeatLoss = { bullets: lostBullets, items: lostItems };   // 易失，仅供醒来文本
+    // M18：人类战败非死亡时，同伴一并被打散（丧尸战败仍走死亡，到不了这里）
+    var comp = G.engine.companionState && G.engine.companionState();
+    if (comp) {
+      var cd = G.data.npcs && G.data.npcs[comp.id];
+      s._defeatCompanion = (cd && cd.name) || comp.id;
+      G.engine.companionEnd('defeat');
+    } else { s._defeatCompanion = null; }
     s.world.flags.thugDefeats = (s.world.flags.thugDefeats || 0) + 1;
     // 重伤昏迷：先把 hp 立回 15 再挨过昏迷时间（3 小时的饥渴消耗压不死 15 点血）
     G.engine.statSet('hp', 15);
@@ -1643,7 +1911,11 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var combat = S().combat;
     combat.over = true;
     combat.result = result;
-    if (result === 'win') grantLoot();
+    if (result === 'win') {
+      grantLoot();
+      // M16 埋点：胜利时逐个敌人登记击杀数
+      if (G.engine.statTick) combat.enemies.forEach(function (e) { G.engine.statTick('kills', e.id); });
+    }
 
     // 续接路由（回调优先，其次 returnPassage，最后回地点）
     if (result === 'lose') {
@@ -1686,6 +1958,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 
     if (fled) { var flog = combat.log.slice(); endCombat('flee'); return { status: 'flee', log: flog, state: null }; }
 
+    // M18：玩家行动后，同伴自动攻击（可能补刀，逃跑除外）
+    allyTurn();
+
     if (allDead()) { combat.log.push('战斗结束。'); var wlog = combat.log.slice(); endCombat('win'); return { status: 'win', log: wlog, state: null }; }
 
     // 敌人回合
@@ -1725,8 +2000,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   window.G = window.G || {};
   G.engine = G.engine || {};
 
-  G.SAVE_VERSION = 3;   // M14：player.outfit（服装三槽）；M15：player.stats.cold（寒冷值）
+  G.SAVE_VERSION = 6;   // M14：player.outfit；M15：player.stats.cold；M16：world.codex/world.stats + player.stats.grime；M17：world.homeUpg/gardenDay + homeStorage；M18：world.companion
   var PREFIX = 'lgys_save_';
+  var LEGACY_KEY = 'lgys_save';   // M16：M9 之前可能存在的无槽位后缀单档键（一次性迁入槽 1）
   var SLOTS = [1, 2, 3, 'auto'];
 
   function key(slot) { return PREFIX + slot; }
@@ -1763,6 +2039,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       switch (v) {
         case 1: migrateV1toV2(data); break;   // 无 outfit → 发默认初始装
         case 2: migrateV2toV3(data); break;   // 无 cold → 补 0（老档进冬季正常生效）
+        case 3: migrateV3toV4(data); break;   // 无 codex/stats/grime → 补空容器
+        case 4: migrateV4toV5(data); break;   // 无 homeUpg/gardenDay/homeStorage → 补默认
+        case 5: migrateV5toV6(data); break;   // 无 companion → 补 null（老档没有同行者）
       }
       v++;
     }
@@ -1779,6 +2058,25 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   function migrateV2toV3(d) {
     var p = d.player; if (!p || !p.stats) return;
     if (p.stats.cold == null) p.stats.cold = 0;
+  }
+  // v3→v4：老档无图鉴/统计/脏污字段，补空容器（M16 四合一：codex/stats/grime）。
+  function migrateV3toV4(d) {
+    d.world = d.world || {};
+    if (!d.world.codex) d.world.codex = { enemies: {} };
+    if (!d.world.stats) d.world.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (d.player && d.player.stats && d.player.stats.grime == null) d.player.stats.grime = 0;
+  }
+  // v4→v5：老档无家园升级/仓储字段，补默认（未修任何升级，柜子空的）。
+  function migrateV4toV5(d) {
+    d.world = d.world || {};
+    if (!d.world.homeUpg) d.world.homeUpg = { door: false, rain: false, garden: false, storage: false };
+    if (d.world.gardenDay === undefined) d.world.gardenDay = null;
+    if (!d.homeStorage) d.homeStorage = [];
+  }
+  // v5→v6：老档无同行字段，补 null（同行是易失场景外的持久态，但老档必然无人同行）。
+  function migrateV5toV6(d) {
+    d.world = d.world || {};
+    if (d.world.companion === undefined) d.world.companion = null;
   }
   function defaultOutfit(gender) {
     if (G.engine.initialOutfit) return G.engine.initialOutfit(gender);
@@ -1801,7 +2099,36 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     d.npcs = d.npcs || {};
     if (d.player && !d.player.outfit) d.player.outfit = defaultOutfit(d.player.gender);
     if (d.player && d.player.stats && d.player.stats.cold == null) d.player.stats.cold = 0;
+    // M16：图鉴/统计/脏污容器兜底（手工档/极端空档）
+    if (!d.world.codex) d.world.codex = { enemies: {} };
+    if (!d.world.codex.enemies) d.world.codex.enemies = {};
+    if (!d.world.stats) d.world.stats = { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+    if (!d.world.stats.kills) d.world.stats.kills = {};
+    if (d.player && d.player.stats && d.player.stats.grime == null) d.player.stats.grime = 0;
+    // M17：家园升级/仓储容器兜底
+    if (!d.world.homeUpg) d.world.homeUpg = { door: false, rain: false, garden: false, storage: false };
+    if (d.world.gardenDay === undefined) d.world.gardenDay = null;
+    if (!d.homeStorage) d.homeStorage = [];
+    // M18：同行容器兜底（手工档/极端空档）；undefined→null（无同行）
+    if (d.world.companion === undefined) d.world.companion = null;
     return d;
+  }
+
+  // ---- 旧键迁移（M16：M9 之前若用过无后缀单档键 lgys_save，一次性迁入槽 1） ----
+  // 幂等：仅当槽 1 为空且旧键存在时执行；保留旧键做回退（不删除），确认新档可读后自然废弃。
+  var legacyMigrated = false;
+  function migrateLegacyKey() {
+    if (legacyMigrated) return;
+    legacyMigrated = true;
+    var ls = LS(); if (!ls) return;
+    try {
+      var raw = ls.getItem(LEGACY_KEY);
+      if (!raw) return;
+      if (ls.getItem(key(1))) return;          // 槽 1 已有档，不覆盖
+      JSON.parse(raw);                          // 校验是合法 JSON 再迁
+      ls.setItem(key(1), raw);                  // 迁入槽 1（旧键保留做回退）
+      console.info('[save] 旧存档已迁入槽位 1（原键保留）');
+    } catch (e) { console.warn('[save] 旧存档迁移跳过:', e); }
   }
 
   // ---- 存 / 读 ------------------------------------------------------------
@@ -1815,6 +2142,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   function autoSave() { return save('auto'); }
 
   function load(slot) {
+    migrateLegacyKey();
     var ls = LS(); if (!ls) return false;
     var raw = ls.getItem(key(slot));
     if (!raw) { console.warn('[save] 空槽位:', slot); return false; }
@@ -1847,6 +2175,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   }
 
   function listSaves() {
+    migrateLegacyKey();
     var ls = LS(), out = {};
     SLOTS.forEach(function (slot) {
       var raw = ls && ls.getItem(key(slot));
@@ -2134,7 +2463,11 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   // 这里的「补充行动」用的是 M2 自定义的简单 {label, cond?, fx?} / {label, sleep} 形状，
   // 与下面 M3 数据行动 {id,label,type,time,energy,requiresItem}（走 G.engine.scavenge）是两套东西。
   var LOCATION_EXTRA_ACTIONS = {
-    home: [{ label: '睡到天亮（恢复精力与生命）', sleep: 8 }]
+    home: [
+      { label: '睡到天亮（恢复精力与生命）', sleep: 8 },
+      // M17：打好「储物柜」升级后才出现，打开存取面板（panels.js openHomeStorage）。
+      { label: '整理储物柜', cond: { homeUpg: { storage: true } }, onclick: function () { G.ui.panels.openHomeStorage(); } }
+    ]
   };
   function tradeActionsFor(locId) {
     var trade = G.data.trade || {};
@@ -2172,7 +2505,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 
   // M3/M11 数据行动：type:'scavenge'→G.engine.scavenge，'water'/'boil'（M11 水源系统）→
   // G.engine.gatherWater/boilWater，均处理掉落/耗时/事件结算，形状一致（返回 {ok,msg}）。
-  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire' };
+  // 'repair'（M17 家园升级）→ G.engine.homeRepair，同样形状。
+  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire', wash: 'washUp', repair: 'homeRepair' };
   function runDataAction(locId, action) {
     var fnName = DATA_ACTION_FN[action.type];
     if (!fnName || !G.engine[fnName]) { console.warn('[ui] 未知地点行动类型:', action.type); return; }
@@ -2225,18 +2559,33 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       var alist = h('div', { class: 'action-list' });
       dataActions.forEach(function (a) {
         // requiresItem 缺失时置灰并在文案追加提示（M11：玻璃瓶/打火机等取水+煮水前置道具）。
-        var locked = a.requiresItem && !G.engine.hasItem(a.requiresItem);
+        var lockedItem = a.requiresItem && !G.engine.hasItem(a.requiresItem);
+        // M17：materials（家园升级多材料需求）逐项判定，不足则置灰并列出缺口。
+        var missingMats = [];
+        if (a.materials) {
+          Object.keys(a.materials).forEach(function (mid) {
+            var want = a.materials[mid];
+            if (G.engine.countItem(mid) < want) {
+              var mdef = G.engine.itemDef(mid);
+              missingMats.push((mdef ? mdef.name : mid) + '×' + want);
+            }
+          });
+        }
+        var locked = lockedItem || missingMats.length > 0;
         var btn = h('button', { class: 'btn' + (locked ? ' disabled' : ''), onclick: function () { runDataAction(locId, a); } });
         var label = a.label || '';
-        if (locked) {
+        if (lockedItem) {
           var need = G.engine.itemDef(a.requiresItem);
           label += '（需要' + (need ? need.name : a.requiresItem) + '）';
+        } else if (missingMats.length) {
+          label += '（还差' + missingMats.join('、') + '）';
         }
         btn.innerHTML = G.ui.tags.parse(label);
         alist.appendChild(btn);
       });
       extraActions.forEach(function (a) {
-        var btn = h('button', { class: 'btn', onclick: function () { doAction(a); } });
+        // M17：extraAction 支持 onclick 自定义处理（如打开储物柜面板），无则走原有 doAction。
+        var btn = h('button', { class: 'btn', onclick: function () { if (a.onclick) a.onclick(); else doAction(a); } });
         btn.innerHTML = G.ui.tags.parse(a.label || '');
         alist.appendChild(btn);
       });
@@ -2342,6 +2691,23 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       erow.appendChild(card);
     });
     screen.appendChild(erow);
+
+    // M18：我方同伴单位（战斗型同行者）——独立血条，30% 以下自动撤出后标记已撤离
+    var allies = combat.allies || [];
+    if (allies.length) {
+      var arow = h('div', { class: 'enemy-row ally-row' });
+      allies.forEach(function (u) {
+        var card = h('div', { class: 'enemy-card ally-card' + (u.retreated ? ' dead' : '') });
+        card.appendChild(h('div', { class: 'ename', style: { color: G.ui.tags.npcColor(u.id) }, text: u.name + (u.retreated ? '（已撤离）' : '') }));
+        var track = h('div', { class: 'hp-track' });
+        var pct = Math.max(0, u.hp) / (u.maxHp || 1) * 100;
+        track.appendChild(h('div', { class: 'hp-fill ally', style: { width: pct + '%' } }));
+        card.appendChild(track);
+        card.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--fg-dim)', marginTop: '2px' }, text: Math.max(0, u.hp) + '/' + u.maxHp }));
+        arow.appendChild(card);
+      });
+      screen.appendChild(arow);
+    }
 
     var w = S().player.weapon;
     var wdef = w && G.engine.itemDef(w.id);
@@ -2498,6 +2864,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
  *   G.ui.panels.open(name)   —— name ∈ 'calendar'|'inventory'|'body'|'map'|'system'
  *                                （render.js 的顶栏/状态条/底部导航按此调用）
  *   G.ui.panels.openShop(id) —— 由 G.ui.showShop 转发调用，见 render.js
+ *   G.ui.panels.openHomeStorage() —— M17：家园储物柜存取面板，由 home 的「整理储物柜」
+ *                                extraAction（render.js LOCATION_EXTRA_ACTIONS）直接调用
  *
  * 依赖 render.js 提供的共享内部工具：G.ui._h（DOM 构造）、G.ui._clear、
  * G.ui.openOverlay（浮层外壳）、G.ui.toast。
@@ -2738,6 +3106,63 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   }
 
   // =========================================================================
+  // 储物柜面板（M17，仿背包双列表：柜内点击取出 / 背包点击存入）
+  // =========================================================================
+  function openHomeStorage() {
+    openTop({
+      title: '储物柜',
+      build: function (body) {
+        function refreshPanel() { if (activeOverlay) activeOverlay.refresh(); G.ui.refresh(); }
+        var weight = G.engine.homeStorageWeight();
+        var cap = G.engine.homeStorageCap();
+        body.appendChild(h('div', {
+          class: 'inv-weight' + (weight >= cap ? ' over' : ''),
+          text: '柜内 ' + weight.toFixed(1) + ' / ' + cap
+        }));
+
+        body.appendChild(h('div', { class: 'section-title', text: '柜内物资（点击取出）' }));
+        var storeList = h('div', { class: 'inv-list' });
+        var st = S().homeStorage || [];
+        st.forEach(function (entry) {
+          var def = G.engine.itemDef(entry.id) || {};
+          var row = h('div', {
+            class: 'inv-item',
+            onclick: function () { G.engine.homeStorageWithdraw(entry.id, 1); refreshPanel(); }
+          });
+          row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '×' + entry.count }));
+          storeList.appendChild(row);
+        });
+        if (!st.length) storeList.appendChild(h('div', { class: 'inv-empty', text: '柜子空的' }));
+        body.appendChild(storeList);
+
+        body.appendChild(h('div', { class: 'section-title', text: '背包物资（点击存入）' }));
+        var bagList = h('div', { class: 'inv-list' });
+        var bag = (S().player.inventory || []).filter(function (e) {
+          var d = G.engine.itemDef(e.id);
+          return d && d.type !== 'weapon' && d.type !== 'clothing';
+        });
+        bag.forEach(function (entry) {
+          var def = G.engine.itemDef(entry.id) || {};
+          var row = h('div', {
+            class: 'inv-item',
+            onclick: function () {
+              var res = G.engine.homeStorageDeposit(entry.id, 1);
+              if (res && !res.ok && res.msg) G.ui.toast(res.msg);
+              refreshPanel();
+            }
+          });
+          row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '×' + entry.count }));
+          bagList.appendChild(row);
+        });
+        if (!bag.length) bagList.appendChild(h('div', { class: 'inv-empty', text: '背包里没有能存的东西' }));
+        body.appendChild(bagList);
+      }
+    });
+  }
+
+  // =========================================================================
   // 身体面板
   // =========================================================================
   var BODY_STATS = [
@@ -2749,7 +3174,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     { key: 'alcohol', label: '酒精', abnormal: function (v) { return v > G.TUNE.T_DRUNK; }, note: function (v) { return v > G.TUNE.T_DRUNK ? '酩酊大醉，判定受罚' : ''; } },
     { key: 'addiction', label: '成瘾', abnormal: function (v) { return v > G.TUNE.T_ADDICT; }, note: function (v) { return v > G.TUNE.T_ADDICT ? '瘾发难耐，每日发作' : ''; } },
     { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } },
-    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } }
+    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } },
+    { key: 'grime', label: '脏污', abnormal: function (v) { return v > G.TUNE.T_GRIME; }, note: function (v) { return v > G.TUNE.T_GRIME ? '一身臊臭，惹人嫌弃（NPC 反应/送礼受影响）' : ''; } }
   ];
   // ---- 服装区块（三槽显示 + 换装/卸下/修补） ------------------------------
   var CLOTH_SLOT_META = [
@@ -2933,12 +3359,72 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   }
 
   // =========================================================================
+  // 档案子页（M16）：生存统计 + 敌人图鉴
+  // =========================================================================
+  function openCodex() {
+    G.ui.openOverlay({
+      title: '档案',
+      build: function (body) {
+        var w = S().world || {};
+        var st = w.stats || { kills: {}, scavenges: 0, fights: 0, flees: 0 };
+        var codex = (w.codex && w.codex.enemies) || {};
+        var killsMap = st.kills || {};
+        var totalKills = 0;
+        for (var k in killsMap) totalKills += killsMap[k] || 0;
+        var survived = Math.max(0, (S().player.day || 90) - 90);
+
+        body.appendChild(h('div', { class: 'section-title', text: '生存统计' }));
+        var stats = [
+          ['存活天数', survived + ' 天（第 ' + S().player.day + ' 天）'],
+          ['累计击杀', String(totalKills)],
+          ['搜刮次数', String(st.scavenges || 0)],
+          ['战斗次数', String(st.fights || 0)],
+          ['逃脱次数', String(st.flees || 0)]
+        ];
+        var grid = h('div', { class: 'codex-stats' });
+        stats.forEach(function (row) {
+          var cell = h('div', { class: 'codex-stat' });
+          cell.appendChild(h('span', { class: 'codex-stat-label', text: row[0] }));
+          cell.appendChild(h('span', { class: 'codex-stat-val', text: row[1] }));
+          grid.appendChild(cell);
+        });
+        body.appendChild(grid);
+
+        body.appendChild(h('div', { class: 'section-title', text: '敌人图鉴' }));
+        var enemies = G.data.enemies || {};
+        var seenCount = 0, totalCount = 0;
+        var list = h('div', { class: 'codex-enemies' });
+        Object.keys(enemies).forEach(function (id) {
+          totalCount++;
+          var def = enemies[id];
+          var seen = !!codex[id];
+          if (seen) seenCount++;
+          var card = h('div', { class: 'codex-enemy' + (seen ? '' : ' unseen') });
+          var top = h('div', { class: 'codex-enemy-head' });
+          top.appendChild(h('span', { class: 'codex-enemy-name', text: seen ? (def.name || id) : '？？？' }));
+          if (seen) top.appendChild(h('span', { class: 'codex-enemy-kills', text: '击杀 ' + (killsMap[id] || 0) }));
+          card.appendChild(top);
+          card.appendChild(h('div', { class: 'codex-enemy-hint', text: seen ? (def.hint || '') : '尚未遭遇——出去闯闯才知道它的底细。' }));
+          list.appendChild(card);
+        });
+        body.appendChild(h('div', { class: 'codex-progress', text: '已鉴 ' + seenCount + ' / ' + totalCount }));
+        body.appendChild(list);
+      }
+    });
+  }
+
+  // =========================================================================
   // 系统面板
   // =========================================================================
   function openSystem() {
     openTop({
       title: '系统',
       build: function (body) {
+        // M16：档案（生存统计 + 敌人图鉴）入口
+        var codexRow = h('div', { class: 'item-actions', style: { marginBottom: '12px' } });
+        codexRow.appendChild(h('button', { class: 'btn primary', text: '📖 档案（统计 / 图鉴）', onclick: function () { openCodex(); } }));
+        body.appendChild(codexRow);
+
         var slots = G.engine.listSaves();
         var list = h('div', { class: 'slot-list' });
         [1, 2, 3].forEach(function (slot) {
@@ -3116,7 +3602,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       else if (name === 'system') openSystem();
       else console.warn('[panels] 未知面板:', name);
     },
-    openShop: openShop
+    openShop: openShop,
+    openHomeStorage: openHomeStorage
   };
 
 })();
@@ -3436,6 +3923,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     toolkit: { name: '工具箱', type: 'material', desc: '一只小工具箱，扳手螺丝刀配得七零八落。', price: 20, weight: 3 },
     sewingkit: { name: '针线包', type: 'material', desc: '一只针线包，配着几卷线和补丁布，能把撕破的衣物缝补如初。', price: 8, weight: 1 }, // M14：修补服装耐久
     firewood: { name: '柴火', type: 'material', desc: '一捆劈好的干柴，够生一小堆火。入冬后在外头烤火驱寒，是长时间外勤的命根子。', price: 3, weight: 3 }, // M15：室外「生火取暖」消耗，大幅消退寒冷
+    radio: { name: '收音机', type: 'material', desc: '一台掉漆的便携收音机，旋钮松垮，勉强能收到临港之声的频段。带着它，广播里的坏消息也能早半天听见。', price: 30, weight: 3 }, // M16：带在身上即生效——周三晚远程收听周响广播、尸潮当日上午提前预警（读 hasItem('radio')）
 
     // ---- clothing ×18（三槽：上装 top / 下装 bottom / 鞋 shoes） ------------
     // 字段：slot / warmth(保暖,M15) / armor(减伤) / decency(体面) / durMax(耐久)。
@@ -3582,6 +4070,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   var enemies = {
     zombie_shambler: {
       name: '跛行者', hp: 30, dmg: [5, 12], speed: 2, infect: 0.15,
+      hint: '最常见的行尸，动作迟缓，逃跑不难；成群时才棘手。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }] },
       descPool: [
         '[zed]跛行者[/zed]拖着腐烂的腿扑过来死死咬住你的手臂',
@@ -3592,6 +4081,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     zombie_runner: {
       name: '奔跑者', hp: 25, dmg: [6, 14], speed: 5, infect: 0.2,
+      hint: '血少但极快，几乎逃不掉，宜先手速杀；入冬会迟钝一档。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.2 }] },
       descPool: [
         '[zed]奔跑者[/zed]猛地扑近一口咬在你肩头',
@@ -3602,6 +4092,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     zombie_bloat: {
       name: '肿胀者', hp: 55, dmg: [8, 16], speed: 1, infect: 0.35,
+      hint: '血厚、感染率高，被咬极易染病；速度慢，可放风筝耗死。',
       loot: { drops: [{ id: 'scrapmetal', count: 1, chance: 0.25 }] },
       descPool: [
         '[zed]肿胀者[/zed]一巴掌浮肿的手掌拍在你身上',
@@ -3612,6 +4103,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     zombie_dog: {
       name: '犬尸', hp: 18, dmg: [4, 10], speed: 6, infect: 0.25,
+      hint: '全场最快，成群出没；血极薄，一两击可解决，就怕被围。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.15 }] },
       descPool: [
         '[zed]犬尸[/zed]窜上来一口咬住你的脚踝',
@@ -3622,6 +4114,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     zombie_crawler: {
       name: '爬行者', hp: 20, dmg: [3, 9], speed: 1, infect: 0.2,
+      hint: '拖着残躯贴地伏击，速度慢、伤害低，最好对付；多藏在暗处。',
       loot: { drops: [{ id: 'clothstrip', count: 1, chance: 0.25 }] },
       descPool: [
         '[zed]爬行者[/zed]从地上猛地探身咬住你的脚',
@@ -3632,6 +4125,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     zombie_screecher: {
       name: '尖啸者', hp: 22, dmg: [5, 11], speed: 3, infect: 0.18,
+      hint: '尖叫会引来同类改道包抄，尸潮夜尤其危险，宜速战速决。',
       loot: { drops: [{ id: 'bandage', count: 1, chance: 0.15 }] },
       descPool: [
         '[zed]尖啸者[/zed]尖叫着扑近一口咬住你的耳侧',
@@ -3642,6 +4136,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     thug_grunt: {
       name: '屠夫帮杂兵', human: true, hp: 35, dmg: [7, 15], speed: 3, infect: 0,
+      hint: '屠夫帮的爪牙，会掉子弹；活人不传染，也能靠嘴皮子（色诱/贿赂/虚张）绕过。',
       loot: {
         bullets: { chance: 0.6, min: 2, max: 6 },
         drops: [{ id: 'clothstrip', count: 1, chance: 0.3 }]
@@ -3655,6 +4150,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     thug_brute: {
       name: '屠夫帮打手', human: true, hp: 60, dmg: [10, 20], speed: 2, infect: 0,
+      hint: '屠夫帮的重装打手，血厚拳沉，掉落丰厚；硬拼前先备好防御与药。',
       loot: {
         bullets: { chance: 0.7, min: 4, max: 10 },
         drops: [
@@ -3667,6 +4163,21 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         '屠夫帮打手一记重拳砸在你脸上',
         '屠夫帮打手揪住你的衣领狠狠一肘砸下',
         '屠夫帮打手抡棍横扫砸在你腰上'
+      ]
+    },
+    // M19：屠夫帮货运头子（收网战役第三幕专属，campaign.js 的 thug_boss_pack 使用）
+    thug_boss: {
+      name: '孟九', human: true, hp: 80, dmg: [10, 18], speed: 3, infect: 0,
+      hint: '屠夫帮的货运头子，老秦带出来的旧部；出手又快又狠，招招照着要害去。',
+      loot: {
+        bullets: { chance: 1, min: 10, max: 15 },
+        drops: [{ id: 'militaryfirstaid', count: 1, chance: 0.5 }]
+      },
+      descPool: [
+        '孟九侧身让过你的攻势，枪把子反手砸在你太阳穴上',
+        '孟九一脚踩住你的脚背，肘尖狠狠顶进你胸口',
+        '孟九贴身欺近，短刀在你小臂上豁开一道口子',
+        '孟九抓住你的衣领，把你整个人抡在路障上'
       ]
     }
   };
@@ -3683,6 +4194,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     screecher_horde:   ['zombie_screecher', 'zombie_shambler', 'zombie_shambler'],
     thug_patrol:       ['thug_grunt', 'thug_grunt'],
     thug_squad:        ['thug_grunt', 'thug_brute'],
+    thug_boss_pack:    ['thug_boss', 'thug_grunt'],
     metro_horde:       ['zombie_runner', 'zombie_crawler', 'zombie_shambler']
   };
   Object.keys(encounters).forEach(function (id) { G.data.encounters[id] = encounters[id]; });
@@ -3716,6 +4228,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
  *                  M15：兼「取暖」，煮水时顺带消退寒冷 TUNE.boilWarmRelief
  *   'warm'     —— 走 G.engine.makeFire（M15 新增），requiresItem:'firewood'（消耗 1），
  *                  室外「生火取暖」大幅消退寒冷 TUNE.fireWarmRelief；cond:{stat:{cold:{gt:0}}} 仅有寒冷时显示
+ *   'repair'   —— 走 G.engine.homeRepair（M17 新增），action.repairKey:'door'|'rain'|'garden'|'storage'，
+ *                  action.materials:{itemId:count} 消耗性材料，requiresItem 可选（在包不消耗，如 toolkit）；
+ *                  一次性写入 world.homeUpg[repairKey]=true，cond:{homeUpg:{key:false}} 修完即从列表消失
  *
  * 配套小逻辑（M1 未提供，数据层补齐，挂到 G.engine）：
  *   G.engine.locationNeighbors(locId)   —— 含 sewer 捷径解锁后的双向可达表 {locId:minutes}
@@ -3738,7 +4253,17 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       descDay: '客厅地板铺着旧毯子，窗帘拉得只留一条缝，桌上摆着从这屋里翻出来的物资。',
       descNight: '你把门栓插死，屋外的声响隔着一层砖墙，烛火晃得墙上影子跟着抖。',
       actions: [
-        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' },
+        { id: 'wash_up', label: '洗漱', type: 'wash', time: 15, energy: 1, cond: { stat: { grime: { gt: 0 } } } },
+        // M17：家园四项升级，一次性行动，修好后按 cond 从列表消失（world.homeUpg 记录，SAVE_VERSION5）。
+        { id: 'upg_door', label: '加固门窗', type: 'repair', repairKey: 'door', time: 90, energy: 10,
+          materials: { scrapmetal: 3, tape: 2 }, requiresItem: 'toolkit', cond: { homeUpg: { door: false } } },
+        { id: 'upg_rain', label: '装雨水收集器', type: 'repair', repairKey: 'rain', time: 60, energy: 8,
+          materials: { glassbottle: 3, rope: 1, wire: 1 }, cond: { homeUpg: { rain: false } } },
+        { id: 'upg_garden', label: '开垦小菜园', type: 'repair', repairKey: 'garden', time: 60, energy: 10,
+          materials: { wildveggie: 2, rainwater: 2 }, cond: { homeUpg: { garden: false } } },
+        { id: 'upg_storage', label: '打造储物柜', type: 'repair', repairKey: 'storage', time: 90, energy: 10,
+          materials: { scrapmetal: 2, rope: 2 }, requiresItem: 'toolkit', cond: { homeUpg: { storage: false } } }
       ],   // 安全区：睡觉/储物箱/存档由 M2 UI 直接调用引擎接口，不算搜刮行动
       scavengeTable: [],
       adjacent: { residential: 20, market: 20, bar: 30 },
@@ -3830,7 +4355,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       descDay: '白天的酒吧没什么人，苏曼在吧台后面擦杯子，半数椅子还倒扣在桌面上，油灯只点了靠里的几盏。',
       descNight: '灯光昏黄，酒气混着烟味，老秦在门口守着，没人敢在这里动手。',
       actions: [
-        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' }
+        { id: 'boil_water', label: '烧水煮沸', type: 'boil', time: 20, energy: 3, requiresItem: 'lighter' },
+        { id: 'wash_up', label: '洗漱', type: 'wash', time: 15, energy: 1, cond: { stat: { grime: { gt: 0 } } } }
       ],   // 中立据点禁械，无搜刮
       scavengeTable: [],
       adjacent: { home: 30, market: 20, police: 25, campus: 30, church: 20 },
@@ -4057,10 +4583,22 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       ? '　初冬的夜风灌进衣领，冻得人骨头发紧。'
       : '　初冬的寒意漫上来，路边的水洼结了层薄冰。';
   }
+  // M17：home 描述追加已修好的升级可见变化（按 world.homeUpg 逐项拼接，其余地点不受影响）。
+  function homeUpgSuffix(locId) {
+    if (locId !== 'home') return '';
+    var hu = G.state.world.homeUpg;
+    if (!hu) return '';
+    var out = '';
+    if (hu.door) out += '　窗框钉了废铁又缠了胶带，风声都被挡在外头。';
+    if (hu.rain) out += '　屋檐下挂着一串倒扣的玻璃瓶，接雨水用的。';
+    if (hu.garden) out += '　墙根那畦野菜绿油油的，是自己种的。';
+    if (hu.storage) out += '　墙角那口储物柜锁得严实。';
+    return out;
+  }
   function locationDesc(locId) {
     var loc = G.data.locations[locId];
     if (!loc) return '';
-    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId);
+    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId) + homeUpgSuffix(locId);
   }
   G.engine.locationDesc = locationDesc;
 
@@ -4101,6 +4639,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var minutes = Math.round(neighbors[destId] * G.engine.timeCostMod());
     G.engine.applyFx({ time: minutes });
     if (G.state.player.stats.hp <= 0) return { ok: false, msg: '你倒下了。', died: true };
+    // M16：经过下水道一身污泥（进入 sewer 累积脏污）
+    if (destId === 'sewer' && G.TUNE) G.engine.statAdd('grime', G.TUNE.grimeSewer || 10);
     G.engine.goLocation(destId);
     return { ok: true, minutes: minutes };
   }
@@ -4147,6 +4687,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       });
     }
     G.state.scavenge[locId] = count + 1;
+
+    // M16：搜刮埋点（统计）+ 脏污累积（下水道翻找更脏，用 grimeSewer 覆盖）
+    if (G.engine.statTick) G.engine.statTick('scavenges');
+    if (G.TUNE) G.engine.statAdd('grime', locId === 'sewer' ? (G.TUNE.grimeSewer || 10) : (G.TUNE.grimeScavenge || 3));
 
     G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
@@ -4245,6 +4789,71 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     return { ok: true, msg: '你拢起[item]柴火[/item]生了堆火，凑近烤了烤，寒气退了大半。' };
   }
   G.engine.makeFire = makeFire;
+
+  // 洗漱（M16）：home/bar 可用。有水（消耗 1 份任意水类道具）洗到干净（grime→0）；
+  // 无水只能干擦，脏污降到 grimeWashFloor（40）为止。耗时 15 分钟。
+  var WASH_WATER = ['boiledwater', 'bottledwater', 'riverwater', 'rainwater'];
+  function washUp(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    var grime = G.engine.statGet('grime') || 0;
+    var floor = (G.TUNE && G.TUNE.grimeWashFloor != null) ? G.TUNE.grimeWashFloor : 40;
+    // 找一份能用来洗的水
+    var water = null;
+    for (var i = 0; i < WASH_WATER.length; i++) { if (G.engine.hasItem(WASH_WATER[i])) { water = WASH_WATER[i]; break; } }
+    var msg;
+    if (water) {
+      G.engine.removeItem(water, 1);
+      G.engine.statSet('grime', 0);
+      var wd = G.engine.itemDef(water);
+      msg = '你倒出一份[item]' + (wd ? wd.name : '水') + '[/item]，从头到脸细细擦洗了一遍，身上的臭味和泥垢总算下去了，人也精神了些。';
+    } else {
+      if (grime <= floor) {
+        msg = '没有水，你只用干布擦了擦，能弄掉的本就不多——这点脏污，擦不擦一个样。';
+      } else {
+        G.engine.statSet('grime', floor);
+        msg = '手边没水，你只能拿干布使劲擦掉外层的泥污。凑合干净了些，但没水冲，终究擦不透。';
+      }
+    }
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: msg };
+  }
+  G.engine.washUp = washUp;
+
+  // 家园修缮（M17）：一次性消耗材料把 world.homeUpg[repairKey] 写 true。
+  // requiresItem 只判定在包（如 toolkit），不消耗；materials 逐项判定齐全后一次性扣减。
+  var HOME_UPG_MSG = {
+    door: '你把[item]废铁[/item]钉上窗框，[item]胶带[/item]把缝隙一道道封死，工具箱里的螺丝刀拧到最后一颗——这扇门总算不是纸糊的了。',
+    rain: '拿[item]绳子[/item]和[item]电线[/item]把几只[item]玻璃瓶[/item]倒扣着串成一串，斜挂在屋檐下——下次落雨，不用再跑一趟。',
+    garden: '翻松墙根那块空地，把[item]野菜[/item]籽埋进去，浇了两瓶[item]雨水[/item]——能不能长起来，只能等了。',
+    storage: '[item]废铁[/item]焊死柜脚，[item]绳子[/item]捆紧柜身，工具箱里的锤子敲了半宿——这口柜子总算能锁东西了。'
+  };
+  function homeRepair(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    var w = G.state.world;
+    var hu = w.homeUpg || (w.homeUpg = { door: false, rain: false, garden: false, storage: false });
+    if (hu[action.repairKey]) return { ok: false, msg: '这里已经修过了。' };
+    if (action.requiresItem && !G.engine.hasItem(action.requiresItem)) {
+      var need = G.engine.itemDef(action.requiresItem);
+      return { ok: false, msg: '没有[item]' + (need ? need.name : action.requiresItem) + '[/item]，这活儿干不了。' };
+    }
+    var mats = action.materials || {};
+    for (var mid in mats) {
+      if (G.engine.countItem(mid) < mats[mid]) {
+        var mdef = G.engine.itemDef(mid);
+        return { ok: false, msg: '材料不够，还差[item]' + (mdef ? mdef.name : mid) + '[/item]。' };
+      }
+    }
+    for (var rid in mats) G.engine.removeItem(rid, mats[rid]);
+    hu[action.repairKey] = true;
+    if (action.repairKey === 'garden') w.gardenDay = G.state.player.day;   // 开始 2 天收获计时
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: HOME_UPG_MSG[action.repairKey] || '修好了。' };
+  }
+  G.engine.homeRepair = homeRepair;
 
   // ---- 通用氛围/收获/遇敌 random 事件（每地点 2–3 条，无剧情，给 M8 事件池打底） ----
   function passage(id, text, choices) {
@@ -4725,6 +5334,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         { loc: 'bar', range: [1140, 120] }        // 19:00–次日02:00
       ],
       likes: ['liquor', 'driedmeat'], dislikes: ['spoiledcan'],
+      // M18 同行：近战型打手，硬朗抗揍。dmg/hp/hit 为战斗内临时值（进场满血）。
+      companion: {
+        role: 'melee', hp: 50, dmg: [7, 12], hit: 0.82,
+        joinLine: '[npc:qin]老秦[/npc]把枪往腰后一别，跟了上来："走前头，我替你压后。"',
+        lines: [
+          '[npc:qin]老秦[/npc]半步不离地缀在你侧后，目光扫过每一个墙角。',
+          '"别贴着窗根走。"[npc:qin]老秦[/npc]伸手把你往里带了带。',
+          '[npc:qin]老秦[/npc]低声报着方位："左手两点钟，有动静，盯着。"',
+          '"跟我当年带的兵一个毛病——太急。"[npc:qin]老秦[/npc]难得咧了下嘴。',
+          '[npc:qin]老秦[/npc]替你拎过半袋沉东西，一声没吭。',
+          '"这一带我熟。"[npc:qin]老秦[/npc]用下巴点了点前路，"跟紧。"'
+        ]
+      },
       chat: [
         [
           '[npc:qin]老秦[/npc]上下打量你一眼，没说话，只把手按在腰间。',
@@ -4807,6 +5429,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         { loc: 'sewer', stageMin: 2 }             // 信任阶段后可在下水道据点找到；此前事件驱动
       ],
       likes: ['chocolatebar', 'liquor'], dislikes: ['spoiledcan'],
+      // M18 同行：不参战的侦察位——逃跑成功率 +0.15、随机遇敌几率 -30%（scout 分支，无战斗单位）。
+      companion: {
+        role: 'scout', scout: true, fleeBonus: 0.15, encMod: 0.30,
+        joinLine: '[npc:mao]灰猫[/npc]松松垮垮地跟上来，压低声音："我在前头替你探路——别指望我动手，我只带你绕开麻烦。"',
+        lines: [
+          '[npc:mao]灰猫[/npc]忽然拽住你的袖子，示意噤声，等一队黑影从街对面晃过去才松手。',
+          '"这条巷子我熟，跟我走。"[npc:mao]灰猫[/npc]拐进一道你没注意到的窄缝。',
+          '[npc:mao]灰猫[/npc]贴着墙走，眼睛却在替你数着屋顶和窗口。',
+          '"前面味道不对，绕。"[npc:mao]灰猫[/npc]头也不回。',
+          '[npc:mao]灰猫[/npc]小声哼着不成调的歌，倒像是这末世里唯一放松的人。',
+          '"跟着我，少挨两顿打。"[npc:mao]灰猫[/npc]冲你眨眨眼。'
+        ]
+      },
       chat: [
         [
           '[npc:mao]灰猫[/npc]勾起嘴角：“情报可不便宜，宝贝。”',
@@ -4889,6 +5524,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         { loc: 'gas' }                            // 全天加油站
       ],
       likes: ['sparepart', 'toolkit'], dislikes: ['wildveggie'],
+      // M18 同行：持枪火力位，伤害高但命中一般（手抖），弹药不计（自带）。体格较弱易被打退。
+      companion: {
+        role: 'gun', hp: 38, dmg: [6, 11], hit: 0.68,
+        joinLine: '[npc:dou]阿豆[/npc]抄起那把改装枪，手还在抖："我、我跟你去……子弹我自己有，你别管。"',
+        lines: [
+          '[npc:dou]阿豆[/npc]端着枪走得深一脚浅一脚，枪口却始终朝着有动静的方向。',
+          '"这枪我改过，后坐小。"[npc:dou]阿豆[/npc]小声跟你显摆。',
+          '[npc:dou]阿豆[/npc]的手抖得厉害，攥紧枪托才勉强稳住。',
+          '"有你在……我没那么慌。"[npc:dou]阿豆[/npc]闷声说。',
+          '[npc:dou]阿豆[/npc]一边走一边替你把松了的背带扣紧。',
+          '"听见没？那声音……是空调外机，不是丧尸。"[npc:dou]阿豆[/npc]松了口气。'
+        ]
+      },
       chat: [
         [
           '[npc:dou]阿豆[/npc]手抖着拧螺丝：“修东西……可以，先给点药。”',
@@ -5263,6 +5911,11 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var d = def(id), n = nstate(id), p = S().player;
     var tier = Math.min(n.stage, d.chat.length - 1);
     var line = pickLine(d.chat[tier], n, 'chatIdx');
+    // M16 清洁度：脏污过高时，日常搭话前置一句该 NPC 的嫌弃变体（10 条见 grime.js）
+    if (G.TUNE && (G.engine.statGet('grime') || 0) > G.TUNE.T_GRIME &&
+        G.data.grimeLines && G.data.grimeLines[id]) {
+      line = G.data.grimeLines[id] + '\n\n' + line;
+    }
     if (n.vars.lastChatDay === p.day) {
       // 今天已互动过：仍给一句话，但不再加好感
       showTalkLine(line);
@@ -5310,8 +5963,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     else if (d.dislikes.indexOf(itemId) >= 0) { delta = -5; reaction = 'dislike'; }
     else { delta = 1; reaction = 'plain'; }
 
+    // M16 清洁度：脏污过高时，普通礼物的 +1 好感失效（喜好/厌恶不受影响）
+    var grimy = G.TUNE && (G.engine.statGet('grime') || 0) > G.TUNE.T_GRIME;
+    var snubbed = grimy && reaction === 'plain';
+    if (snubbed) delta = 0;
+
     G.engine.removeItem(itemId, 1);
-    G.engine.affAdd(id, delta);
+    if (delta !== 0) G.engine.affAdd(id, delta);
     n.vars.lastGiftDay = p.day;
     n.met = true;
 
@@ -5321,11 +5979,132 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var msg;
     if (reaction === 'like') msg = tag + '接过' + itag + '，眼神软了一瞬：“……有心了。”（好感 ' + sign + '）';
     else if (reaction === 'dislike') msg = '你递上' + itag + '，' + tag + '皱眉推开：“这东西我用不上。”（好感 ' + sign + '）';
+    else if (snubbed) msg = tag + '本要伸手，却被你一身脏臭熏得皱起眉，只用两根指头捏过' + itag + '，敷衍地点了点头，没再多话。（好感 +0）';
     else msg = tag + '接过' + itag + '，点了点头：“谢了。”（好感 ' + sign + '）';
 
-    return { ok: true, delta: delta, reaction: reaction, msg: msg };
+    return { ok: true, delta: delta, reaction: reaction, snubbed: snubbed, msg: msg };
   }
   G.engine.giftItem = giftItem;
+
+  // ==========================================================================
+  // 同行作战（M18）—— 数据+逻辑层。状态模型 world.companion 由 state.js 提供，
+  // 战斗单位由 combat.js 消费；这里管：邀请/解散、战斗单位构建、侦察加成、氛围对话池。
+  // 通用（按 id 配置 npc.companion），M19 战役强制同行段落可直接调 companionInvite/End。
+  // ==========================================================================
+  function companionDefOf(id) { var d = def(id); return d && d.companion ? d.companion : null; }
+  G.engine.companionDefOf = companionDefOf;
+
+  // 招待可用物：吃食（food）或酒（烈酒/啤酒/凉茶）；生水不算招待。
+  function isTreatItem(id) {
+    var d = G.engine.itemDef(id); if (!d) return false;
+    if (d.type === 'food') return true;
+    return ['liquor', 'beer', 'herbaltea'].indexOf(id) >= 0;
+  }
+  G.engine.isTreatItem = isTreatItem;
+
+  // 邀请同行。payment ∈ 'aff'（好感-3）| 'treat'（消耗一份吃食/酒，需传 itemId）。
+  function companionInvite(id, payment, itemId) {
+    var d = def(id), n = nstate(id);
+    if (!d || !d.companion) return { ok: false, msg: '这个人帮不上战斗。' };
+    if (!n || !n.alive) return { ok: false, msg: (d ? d.name : '这个人') + '已经不在了。' };
+    if (G.engine.companionActive()) {
+      var cur = G.engine.companionId();
+      return { ok: false, msg: cur === id ? d.name + '已经在跟着你了。'
+        : '已经有' + ((def(cur) && def(cur).name) || '人') + '在同行了，一次只能带一个。' };
+    }
+    if (!G.engine.npcPresent(id, S().player.location)) return { ok: false, msg: d.name + '现在不在这儿。' };
+    if (G.engine.affGet(id) < 60) return { ok: false, msg: '你和' + d.name + '还没熟到能并肩上阵的地步。' };
+    if (payment === 'treat') {
+      if (!itemId || !isTreatItem(itemId) || !G.engine.hasItem(itemId)) return { ok: false, msg: '得先有一份吃食或酒才能招待。' };
+      G.engine.removeItem(itemId, 1);
+    } else {
+      G.engine.affAdd(id, -3);
+    }
+    var until = (S().player.day + 1) * 1440;   // 当日 24:00（次日 00:00 的 absMinute）
+    S().world.companion = { id: id, until: until };
+    n.met = true;
+    return { ok: true, msg: strip(d.companion.joinLine), joinLine: d.companion.joinLine, id: id };
+  }
+  G.engine.companionInvite = companionInvite;
+
+  // 解散/结束同行。reason ∈ 'dismiss'(玩家主动)|'home'(回据点)|'expire'(24:00)|'retreat'(被打退,好感-2)|'defeat'(战败打散)。
+  function companionEnd(reason) {
+    var c = G.engine.companionState(); if (!c) return { ended: false };
+    var d = def(c.id), name = (d && d.name) || '同伴';
+    if (reason === 'retreat') G.engine.affAdd(c.id, -2);
+    S().world.companion = null;
+    var msg;
+    if (reason === 'retreat') msg = name + '伤得不轻，退出了战斗——今天的同行到此为止。';
+    else if (reason === 'expire') msg = '夜深了，' + name + '与你就此别过。';
+    else if (reason === 'home') msg = '回到据点，' + name + '和你道了别，各自歇下。';
+    else if (reason === 'defeat') msg = name + '也被打散在乱局里，不知去向。';
+    else msg = name + '与你分开了。';
+    return { ended: true, msg: msg, id: c.id, reason: reason };
+  }
+  G.engine.companionEnd = companionEnd;
+
+  // 战斗单位（仅战斗型同伴；侦察位 scout 返回 null 不参战）。进场满血，值为战斗内临时态。
+  function companionCombatUnit() {
+    var c = G.engine.companionState(); if (!c) return null;
+    var cd = companionDefOf(c.id);
+    if (!cd || cd.scout) return null;
+    var hp = cd.hp || 40;
+    return {
+      id: c.id, name: (def(c.id) && def(c.id).name) || c.id, role: cd.role,
+      hp: hp, maxHp: hp, dmg: cd.dmg || [4, 8], hit: cd.hit != null ? cd.hit : 0.8, retreated: false
+    };
+  }
+  G.engine.companionCombatUnit = companionCombatUnit;
+
+  // 侦察位（灰猫）：是否在同行 + 逃跑加成 + 遇敌几率削减（供 combat/events 读取）。
+  function companionScoutActive() { var cd = G.engine.companionActive() && companionDefOf(G.engine.companionId()); return !!(cd && cd.scout); }
+  function companionFleeBonus() { var cd = companionScoutActive() && companionDefOf(G.engine.companionId()); return cd ? (cd.fleeBonus || 0) : 0; }
+  function companionEncMod() { var cd = companionScoutActive() && companionDefOf(G.engine.companionId()); return cd ? (cd.encMod || 0) : 0; }
+  G.engine.companionScoutActive = companionScoutActive;
+  G.engine.companionFleeBonus = companionFleeBonus;
+  G.engine.companionEncMod = companionEncMod;
+
+  // 回据点自动道别（goLocation 到达 home 时调用）。
+  function companionOnArrive(loc) {
+    if (loc === 'home' && G.engine.companionActive()) {
+      var r = companionEnd('home');
+      if (r.msg) toast(r.msg);
+    }
+  }
+  G.engine.companionOnArrive = companionOnArrive;
+
+  // 跨日 24:00 到期（dayRollover 调用）。
+  function companionMidnight() {
+    if (G.engine.companionActive()) {
+      var r = companionEnd('expire');
+      if (r.msg) toast(r.msg);
+    }
+  }
+  G.engine.companionMidnight = companionMidnight;
+
+  // 同行氛围对话：移动/搜刮低频触发同伴一句话（random 事件，cond.companion 门 + chance/cd）。
+  if (G.data.story && G.data.story.register) {
+    G.data.story.register({
+      id: 'companion_chat_p',
+      text: function (s) {
+        var c = s.world && s.world.companion;
+        var cd = c && companionDefOf(c.id);
+        var lines = cd && cd.lines;
+        if (!lines || !lines.length) return '……';
+        return lines[Math.floor(Math.random() * lines.length)];
+      },
+      choices: [{ label: '（继续赶路）', fx: {} }]
+    });
+  }
+  if (G.data.events && G.data.events.register) {
+    G.data.events.register({
+      id: 'companion_chat', type: 'random', when: ['enter', 'action'], priority: 1, cooldown: 240,
+      cond: { companion: true, chance: 0.15 },
+      passage: 'companion_chat_p'
+    });
+  }
+
+  function strip(s) { return G.ui && G.ui.tags ? G.ui.tags.strip(s) : s; }
 
   // ==========================================================================
   // 好感面板（在 G.ui 下新增并登记；入口见 render.js 底部导航「关系」）
@@ -5363,6 +6142,44 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
           }));
           body.appendChild(row);
         });
+      }
+    });
+  }
+
+  // M18：邀请同行的付费方式选择浮层（欠人情 / 请客）
+  function openCompanionInvite(id) {
+    var h = G.ui._h;
+    var ov = G.ui.openOverlay({
+      title: '邀请' + def(id).name + '同行',
+      build: function (body) {
+        body.appendChild(h('div', { class: 'slot-summary', text: '带上一名同伴到今晚（回据点或午夜自动散伙），一次只能带一个。要么欠个人情，要么请对方吃点东西。', style: { marginBottom: '8px' } }));
+        var r1 = h('div', { class: 'shop-item' });
+        r1.appendChild(h('span', { text: '欠个人情（好感 -3）' }));
+        r1.appendChild(h('button', {
+          class: 'btn', text: '就这样', onclick: function () {
+            var res = companionInvite(id, 'aff');
+            toast(res.msg); ov.close(); openNpcPanel();
+          }
+        }));
+        body.appendChild(r1);
+        var treats = S().player.inventory.filter(function (e) { return isTreatItem(e.id); });
+        if (treats.length) {
+          body.appendChild(h('div', { class: 'section-title', text: '请客（消耗一份）' }));
+          treats.forEach(function (e) {
+            var idef = G.engine.itemDef(e.id) || {};
+            var row = h('div', { class: 'shop-item' });
+            row.appendChild(h('span', { text: (idef.name || e.id) + '×' + e.count }));
+            row.appendChild(h('button', {
+              class: 'btn', text: '请这个', onclick: function () {
+                var res = companionInvite(id, 'treat', e.id);
+                toast(res.msg); ov.close(); openNpcPanel();
+              }
+            }));
+            body.appendChild(row);
+          });
+        } else {
+          body.appendChild(h('div', { class: 'slot-summary', text: '（你身上没有可以招待的吃食或酒）', style: { opacity: '.7' } }));
+        }
       }
     });
   }
@@ -5420,6 +6237,25 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
               onclick: gifted ? null : function () { chooseGift(id, openNpcPanel); }
             }));
             card.appendChild(acts);
+          }
+          // M18 同行入口/解散（战斗型 NPC 才有 companion 数据；解散不受在场门限制）
+          if (n.alive && d.companion) {
+            var cRow = h('div', { class: 'slot-actions' });
+            if (G.engine.companionId() === id) {
+              cRow.appendChild(h('button', {
+                class: 'btn primary', text: '解散同行', onclick: function () {
+                  var r = G.engine.companionEnd('dismiss');
+                  if (r && r.msg) toast(r.msg);
+                  openNpcPanel();
+                }
+              }));
+              card.appendChild(cRow);
+            } else if (!G.engine.companionActive() && G.engine.npcPresent(id, here) && G.engine.affGet(id) >= 60) {
+              cRow.appendChild(h('button', {
+                class: 'btn', text: '邀请同行', onclick: function () { openCompanionInvite(id); }
+              }));
+              card.appendChild(cRow);
+            }
           }
           body.appendChild(card);
         });
@@ -7655,6 +8491,30 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     '他左右看看，从零件盒的夹层里摸出他的存货分你一点。药劲漫上来，棚顶的铁皮纹路都变得有趣，你们俩靠着皮卡有一搭没一搭地聊废话，聊到日头挪了一个棚宽。松快是真松快——瘾，也是真的又深了一点。',
     [{ label: '（起身离开）', fx: { time: 90 } }]);
 
+  // ---- dou_radio 组装收音机（M16，可重复；零件×2+电池×1 换一台 radio） ----------
+  // 识得阿豆即可（met），不占剧情节拍。已有收音机时他会打趣但仍可再攒一台。
+  events.register({
+    id: 'dou_radio', type: 'story', npc: 'dou', when: ['talk'], once: false, cooldown: 720, priority: 2,
+    cond: { loc: 'gas', met: 'dou', has: { item: ['sparepart', 'battery'] } },
+    passage: 'dou_radio_p1'
+  });
+
+  P('dou_radio_p1',
+    function (s) {
+      var lead = G.engine.hasItem('radio')
+        ? '[npc:dou]阿豆[/npc]瞥见你背包里那台收音机，挑眉：“还想再攒一台？也行，多个备用的，天线烧了不至于抓瞎。”'
+        : '你提起想弄台收音机，[npc:dou]阿豆[/npc]眼睛一亮：“早说啊！广播那点破信号，我闭着眼都能给你调出来。”';
+      return lead + '他伸出三根油乎乎的手指：“[item]零件[/item]两个、[item]电池[/item]一节，我给你焊一台能收临港之声的。周三晚上那姑娘播报，你在城里哪个旮旯都能听见。”';
+    },
+    [
+      { label: '交料，让他组一台（零件×2 电池×1）', cond: { has: { item: ['sparepart', 'battery'] } }, fx: { item: { sparepart: -2, battery: -1, radio: 1 }, time: 40, stat: { energy: -3 }, aff: { dou: 1 }, goto: 'dou_radio_p2' } },
+      { label: '改天再说', fx: {} }
+    ]);
+
+  P('dou_radio_p2',
+    '阿豆把烙铁在裤腿上蹭了两下，埋头一通鼓捣，嘴里念念有词。不到半小时，喇叭里「刺啦」一声窜出人声，他得意地一拍机壳：“听见没？活的！”他把[item]收音机[/item]塞回你怀里，“坏消息来得早，人跑得也早——这玩意儿救过我两回命。”',
+    [{ label: '收好收音机', fx: {} }]);
+
   // ---- dou_s2_1 戒断大事件 + 升3 --------------------------------------------
   events.register({
     id: 'dou_s2_1', type: 'story', npc: 'dou', when: ['enter', 'action', 'talk'], once: true, priority: 8,
@@ -7872,6 +8732,40 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     [
       { label: '陪她播完这一期', fx: { time: 90, stat: { sanity: 5 }, aff: { zhou: 2 } } },
       { label: '往留言箱里投一条新留言', cond: { flag: { 'npc.zhou.s1_1': true, 'npc.zhou.msgPending': false } }, fx: { flag: { 'npc.zhou.msgPending': true }, time: 90, stat: { sanity: 5 }, aff: { zhou: 2 } } }
+    ]);
+
+  // ---- zhou_radio_remote 周三晚·远程收听（M16 收音机效果①） -----------------
+  // 带收音机、不在广播站（campus）时，周三 19:00–23:00 也能收听周响的广播。
+  // 与在场版 zhou_radio_1 互斥（后者 loc:campus，本条 anyOf 排除 campus），留言待播口径一致。
+  var NOT_CAMPUS = { anyOf: [
+    { loc: 'home' }, { loc: 'residential' }, { loc: 'market' }, { loc: 'hospital' },
+    { loc: 'police' }, { loc: 'bar' }, { loc: 'metro' }, { loc: 'park' }, { loc: 'gas' },
+    { loc: 'mall' }, { loc: 'church' }, { loc: 'dock' }, { loc: 'checkpoint' }, { loc: 'sewer' }
+  ] };
+  events.register({
+    id: 'zhou_radio_remote', type: 'scheduled', npc: 'zhou', priority: 4,
+    cond: Object.assign({ weekday: 2, timeRange: [1140, 1380], flag: { 'npc.zhou.s0_1': true }, has: { item: 'radio' } }, NOT_CAMPUS),
+    passage: 'zhou_radio_remote_p'
+  });
+
+  P('zhou_radio_remote_p',
+    function (s) {
+      var head = '晚上八点整，你拧开[item]收音机[/item]，「刺啦」一阵电流后，[npc:zhou]周响[/npc]的声音钻出来，隔着电波也稳当：“这里是临港之声，我是周响。活着的朋友们，晚上好——”';
+      if (G.engine.getFlag('npc.zhou.msgPending')) {
+        s.npcs.zhou.storyFlags.msgPending = false;
+        s.npcs.zhou.storyFlags.msgRead = true;
+        return head + '节目过半，她说要念一张留言。展开纸条的窸窣声透过喇叭传来，随即，你听见自己写下的那句话，被她一字一句念了出来——从发射塔飞出去，绕了大半座城，又落回你耳朵里。那一刻，你留在纸上的话，忽然比说出口时重了很多。';
+      }
+      var pool = [
+        '今晚是安全播报，她挨条念着几条街的路况，哪里塌了，哪里出过尸群。你把收音机贴近耳边，听那把嗓子稳得像什么都吓不倒她——只有你知道，此刻全城不知多少人正和你听着同一句话。',
+        '今晚她念了一段旧书里的散文，念到「春天」那个词时停了两秒：“下面这段，送给还在数日子的那位大爷——接着数，数到春天。”电流里的停顿，比字句更让人心里一暖。',
+        '今晚有人点播，她说本台没唱片，清清嗓子自己唱了一段，跑调跑得理直气壮，唱完自己先笑场：“好了，音乐环节到此结束，本台绝不退票。”你也跟着笑了，笑声在空屋里显得格外响。'
+      ];
+      return head + pool[Math.floor(Math.random() * pool.length)];
+    },
+    [
+      // 收听：+理智 3；每次 1/4 概率耗一节电池（不做电量条，roll 从简）
+      { label: '静静听她播完', fx: { time: 30, stat: { sanity: 3 }, roll: { chance: 0.25, win: { item: { battery: -1 } }, lose: {} } } }
     ]);
 
   // ---- zhou_s2_1 「方舟」传言 + 升3 -----------------------------------------
@@ -8469,7 +9363,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
  *      毒瘾发作日 addict_attack_1（addiction>50，scheduled 每日一次，三分支）、
  *      感染濒死线 infect_crit_1（infection>80，高优先级反复催命，医院可救治）
  *   3. 全局周期：尸潮夜链（horde_warn 预警→日历 eventId 强制触发 horde_night_start
- *      → 尸潮遭遇池 horde_enc_1/2 + 室内 horde_safe_1 → 05:00 horde_night_end 收尾）、
+ *      → 尸潮遭遇池 horde_enc_1/2 + 室内 horde_safe_1（M17：home 加固门窗后走 horde_safe_door
+ *      安心变体，优先级更高）→ 05:00 horde_night_end 收尾）、
  *      雨天（rain_start 上午随机开雨 → rain_harvest/rain_amb 加成与氛围 → 20:00 rain_end）
  *   4. 屠夫帮世界线：butcher_world_1~4（读 qin/mao 线 flag 出文案变体，不写剧情 flag）
  *
@@ -8633,8 +9528,9 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('enc_metro_2', { loc: 'metro', chance: 0.18 }, 360, 'enc_metro_2_p');
 
-  P('rare_metro_1_p', '轨道下的检修坑里翻出一只军用背囊，帆布都朽了，里面的东西却还结实：成排的[item]子弹[/item]，一只没拆封的[med]军用急救包[/med]。撤离的兵没能带走它。', [
-    { label: '收下这份遗物', fx: { bullets: 15, item: { militaryfirstaid: 1 }, stat: { sanity: -1 }, time: 15 } }
+  P('rare_metro_1_p', '轨道下的检修坑里翻出一只军用背囊，帆布都朽了，里面的东西却还结实：成排的[item]子弹[/item]，一只没拆封的[med]军用急救包[/med]。背囊侧袋还塞着一台[item]收音机[/item]，屏面裂了道缝，不知道还响不响。撤离的兵没能带走它。', [
+    // M16：军急救包/子弹稳出；收音机小概率还能用（roll 0.3），坏了就当废铁没捡
+    { label: '收下这份遗物', fx: { bullets: 15, item: { militaryfirstaid: 1 }, stat: { sanity: -1 }, time: 15, roll: { chance: 0.3, win: { item: { radio: 1 } }, lose: {} } } }
   ]);
   ev('rare_metro_1', { loc: 'metro', chance: 0.04 }, 4320, 'rare_metro_1_p');
 
@@ -8924,6 +9820,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     },
     [{ label: '记下这个日子', fx: { flag: { 'world.hordeAlert': true }, appointment: { inDays: 1, minute: 1230, label: '尸潮夜（预警：锁门闭户）', eventId: 'horde_night_start' }, stat: { sanity: -3 } } }]);
 
+  // ---- 尸潮夜：收音机变体（M16 收音机效果②） ---------------------------------
+  // 带收音机时，预警提前到当日上午（同样登记次日 20:30 强制开场）——多出的半天用来备战。
+  // 上午先触发本条并置 hordeAlert=true，则常规 horde_warn（cond hordeAlert:false）当日不再命中，两条互斥。
+  events.register({
+    id: 'horde_warn_radio', type: 'random', when: ['tick', 'enter'], priority: 5, cooldown: 8640,
+    cond: { timeRange: [300, 1020], chance: 0.08, has: { item: 'radio' }, flag: { 'world.hordeNight': false, 'world.hordeAlert': false } },
+    passage: 'horde_warn_radio_p1'
+  });
+
+  P('horde_warn_radio_p1',
+    '清晨的[item]收音机[/item]忽然切断了常规节目，一段加急通报反复播送：“紧急播报——北面居民区观测到大规模移动，规模极大，方向入城。预计明晚过境。请所有幸存者今日之内备足物资、加固门窗、入夜后熄灯闭户。重复一遍……”一整天的预备时间，比往常从傍晚才听到消息，宽裕得多。',
+    [{ label: '趁天亮抓紧备战', fx: { flag: { 'world.hordeAlert': true }, appointment: { inDays: 1, minute: 1230, label: '尸潮夜（收音机预警：锁门闭户）', eventId: 'horde_night_start' }, stat: { sanity: -2 } } }]);
+
   // ---- 尸潮夜：开场（仅由日历 eventId 强制触发；when:[] 不入常规池） ----------
   events.register({ id: 'horde_night_start', type: 'story', when: [], once: false, priority: 9, passage: 'horde_night_start_p1' });
 
@@ -8966,6 +9875,12 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     { label: '用被子蒙住头', fx: { stat: { sanity: -2 }, time: 60 } }
   ]);
   ev('horde_safe_1', { anyOf: [{ loc: 'home' }, { loc: 'bar' }, { loc: 'church' }], chance: 0.5, flag: { 'world.hordeNight': true } }, 120, 'horde_safe_1_p', 5, ['enter', 'action', 'tick']);
+
+  // ---- 尸潮夜：加固门窗后的安心变体（M17，仅 home 且已修「加固门窗」，优先级高于 horde_safe_1） ----
+  P('horde_safe_door_p', '潮声隔着这扇钉死的窗棂闷闷地滚过去，缝隙都用废铁和胶带堵严实了，屋里没有一丝风灌进来。你反倒睡了个踏实觉。', [
+    { label: '（安稳地等它过去）', fx: { stat: { sanity: 2 }, time: 60 } }
+  ]);
+  ev('horde_safe_door', { loc: 'home', homeUpg: { door: true }, chance: 0.5, flag: { 'world.hordeNight': true } }, 120, 'horde_safe_door_p', 6, ['enter', 'action', 'tick']);
 
   // ---- 尸潮夜：收尾（仅由日历 eventId 强制触发） ------------------------------
   events.register({ id: 'horde_night_end', type: 'story', when: [], once: false, priority: 9, passage: 'horde_night_end_p1' });
@@ -9029,7 +9944,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         fx: { roll: { chance: 0.65, win: { goto: 'dol_bluff_ok_p' }, lose: { goto: 'dol_talk_fail_patrol_p' } } } },
       { label: '压低帽檐绕开', fx: { stat: { sanity: -2 } } }
     ]);
-  ev('butcher_world_1', { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12 }, 1440, 'butcher_world_1_p', 1);
+  // M19：屠夫帮倒台（world.butcherFallen）后本组事件停用，换 campaign.js 的 aftermath 变体
+  ev('butcher_world_1', { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_1_p', 1);
 
   P('butcher_world_2_p',
     function () {
@@ -9045,7 +9961,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       { label: '记下船开走的方向', fx: { stat: { sanity: -1 }, time: 15 } },
       { label: '不宜久留，撤', fx: {} }
     ]);
-  ev('butcher_world_2', { loc: 'dock', chance: 0.12 }, 1440, 'butcher_world_2_p', 1);
+  ev('butcher_world_2', { loc: 'dock', chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_2_p', 1);
 
   P('butcher_world_3_p',
     function () {
@@ -9062,7 +9978,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       { label: '撕掉告示', fx: { stat: { sanity: 2 } } },
       { label: '看过就走', fx: { stat: { sanity: -2 } } }
     ]);
-  ev('butcher_world_3', { anyOf: [{ loc: 'sewer' }, { loc: 'dock' }, { loc: 'residential' }], chance: 0.1 }, 2880, 'butcher_world_3_p', 1);
+  ev('butcher_world_3', { anyOf: [{ loc: 'sewer' }, { loc: 'dock' }, { loc: 'residential' }], chance: 0.1, flag: { 'world.butcherFallen': false } }, 2880, 'butcher_world_3_p', 1);
 
   P('butcher_world_4_p',
     function () {
@@ -9076,7 +9992,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       { label: '趁乱摸走他们撂下的物资', fx: { item: { cannedfood: 1 }, bullets: 3, stat: { sanity: -2 }, time: 10 } },
       { label: '别蹚浑水，绕开', fx: {} }
     ]);
-  ev('butcher_world_4', { loc: 'mall', chance: 0.12 }, 1440, 'butcher_world_4_p', 1);
+  ev('butcher_world_4', { loc: 'mall', chance: 0.12, flag: { 'world.butcherFallen': false } }, 1440, 'butcher_world_4_p', 1);
 
 })();
 
@@ -9136,11 +10052,13 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     var lossStr = parts.length
       ? '口袋全被翻了面，少掉的东西数得出来：[item]' + parts.join('、') + '[/item]。'
       : '口袋全被翻了面，他们没搜出几样值钱的，临走啐了一口。';
+    // M18：若战败时有同伴同行，补一句同伴被打散的交代（不追责，纯氛围）
+    var comp = s._defeatCompanion ? '混乱里' + s._defeatCompanion + '被冲散了，等你醒来时身边空无一人——但愿' + s._defeatCompanion + '比你跑得快。' : '';
     if ((s.world.flags.thugDefeats || 0) <= 1) {
-      return '疼把你砸醒。你趴在冰冷的地上，嘴里都是铁锈味，[blood]肋骨[/blood]随着呼吸一抽一抽地扯着疼，' + lossStr +
+      return '疼把你砸醒。你趴在冰冷的地上，嘴里都是铁锈味，[blood]肋骨[/blood]随着呼吸一抽一抽地扯着疼，' + lossStr + comp +
         '几个钟头就这么没了，他们留了你一条命——大概是懒得为一个搜空的口袋收尸。';
     }
-    return '又是这种熟悉的疼法。你在挨过闷棍的钝痛里醒过来，' + lossStr +
+    return '又是这种熟悉的疼法。你在挨过闷棍的钝痛里醒过来，' + lossStr + comp +
       '躺在地上的这几个钟头，风把街上的灰吹进了你的领口。';
   }, [
     { label: '撑着地面爬起来', fx: { goto: 'dol_defeat_p2' } }
@@ -9656,6 +10574,576 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     { label: '狠不下心，替他合上眼', fx: { stat: { sanity: 4 }, time: 10 } }
   ]);
   ev('frozen_wanderer_3', outdoor({ season: 'deepwinter', chance: 0.08 }), 4320, 'frozen_wanderer_3_p', 2);
+
+})();
+
+</script>
+<!-- js/data/story/grime.js -->
+<script>
+/* =============================================================================
+ * grime.js — M16 清洁度（脏污）系统的文本适配（数据层）
+ * -----------------------------------------------------------------------------
+ * 机制（grime 累积/消退/阈值）在引擎侧（state.js/time.js/save.js）与数据侧
+ * （locations.js 洗漱行动、combat.js 战斗累积、npcs.js 搭话/送礼钩子）实现；
+ * 本文件只承载文本：
+ *
+ *   1. G.data.grimeLines —— 10 名 NPC 的「嫌弃变体」台词。grime > T_GRIME 时，
+ *      npcs.js 的 dailyChat 会把对应 NPC 的这句话前置到日常搭话正文之前。
+ *   2. 高脏污随机事件（grime > T_GRIME 触发）：野狗循味跟踪、招蝇引臭各一，
+ *      纯氛围/轻后果，priority 低、cooldown 长（M1 老坑：随机事件必带 chance/cooldown）。
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  G.data = G.data || {};
+  var story = G.data.story, events = G.data.events;
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+
+  // ---- 1. 10 名 NPC 嫌弃变体（grime>70 时前置到日常搭话） --------------------
+  G.data.grimeLines = {
+    qin:  '[npc:qin]老秦[/npc]闻见味儿，不动声色往旁边挪了半步，皱眉：“多久没洗了？这一身臊味，招丧尸也招人嫌。”',
+    lin:  '[npc:lin]林晚[/npc]下意识抬手掩了下口鼻，医生的毛病犯了：“你这卫生状况，破点皮就得感染。找水擦擦。”',
+    mao:  '[npc:mao]灰猫[/npc]捏着鼻子退开半米：“哟，老远就闻着你了。干我这行，气味也是破绽——你这一身，藏哪儿都露馅。”',
+    su:   '[npc:su]苏曼[/npc]端酒的手停在半空，别过脸：“亲爱的，你这味儿能把我客人熏跑。后头有水，去冲冲再来。”',
+    dou:  '[npc:dou]阿豆[/npc]夸张地扇了扇鼻子：“老板，你这是在垃圾堆里打过滚？离我工具台远点，别把味儿蹭上去。”',
+    zhou: '[npc:zhou]周响[/npc]笑着往后仰：“本台温馨提示——这位听众离麦克风远一点，你这气味隔着电波都能播出去。”',
+    zhao: '[npc:zhao]赵铁[/npc]从柜台后皱眉扇手：“先把自己收拾干净了再进店，别熏着我的货。”',
+    chen: '[npc:chen]陈神父[/npc]默默递来一块干净布巾，语气温和却不容推拒：“洁净亦是一种敬畏，孩子。去洗一洗吧。”',
+    cai:  '[npc:cai]老蔡[/npc]吸吸鼻子，咧嘴一乐：“臭啦臭啦——江里的鱼都要顺着味儿浮上来喽！”',
+    fang: '[npc:fang]方哨[/npc]端枪的手没动，只是眉头一紧：“这么大味儿，夜里放哨都得离你三米。整理下个人卫生，兵。”'
+  };
+
+  // ---- 2. 高脏污随机事件 -----------------------------------------------------
+  // 室外 11 地点（排除 home/bar/church 三处室内安全区）
+  var OUTDOOR = { anyOf: [
+    { loc: 'residential' }, { loc: 'market' }, { loc: 'hospital' }, { loc: 'police' },
+    { loc: 'campus' }, { loc: 'metro' }, { loc: 'park' }, { loc: 'gas' },
+    { loc: 'mall' }, { loc: 'dock' }, { loc: 'checkpoint' }, { loc: 'sewer' }
+  ] };
+
+  // 野狗循味跟踪：一条活狗（或犬尸）循着体臭缀上来
+  P('grime_dog_1_p',
+    '一条瘦骨嶙峋的野狗不知从哪儿钻出来，鼻子抽动着，死死缀在你身后十来步——它循的不是别的，正是你身上那股经久不散的臊臭。它跟得越来越近，喉咙里滚出低吼。',
+    [
+      { label: '捡石子把它轰走', fx: { stat: { energy: -3, sanity: -2 }, time: 10 } },
+      { label: '它扑上来了——迎战', fx: { combat: 'zombie_dog' } }
+    ]);
+  events.register({
+    id: 'grime_dog_1', type: 'random', priority: 2, cooldown: 2880,
+    cond: Object.assign({ stat: { grime: { gt: 70 } }, chance: 0.16 }, OUTDOOR),
+    passage: 'grime_dog_1_p'
+  });
+
+  // 招蝇引臭：走到哪儿一团蚊蝇跟到哪儿，路人绕着走
+  P('grime_flies_1_p',
+    '一团蚊蝇嗡嗡地绕着你打转，怎么挥都赶不散——你这身味儿成了它们的盛宴。街角几个幸存者远远瞟了一眼，默契地绕开你走，那眼神让人不太好受。',
+    [{ label: '（灰头土脸地走开）', fx: { stat: { sanity: -3 }, time: 10 } }]);
+  events.register({
+    id: 'grime_flies_1', type: 'random', priority: 1, cooldown: 2880,
+    cond: Object.assign({ stat: { grime: { gt: 70 } }, chance: 0.14 }, OUTDOOR),
+    passage: 'grime_flies_1_p'
+  });
+
+})();
+
+</script>
+<!-- js/data/story/campaign.js -->
+<script>
+/* =============================================================================
+ * campaign.js — M19：屠夫帮收网战役（三幕 + 孟九 + 战后世界变体）
+ * -----------------------------------------------------------------------------
+ * qin 复仇线从「只循环不收网」升级为三幕战役。入口门槛：qin stage4 + s4_1 +
+ * day≥110（开局 day90 起第 20 天，防前期误入）。
+ *
+ * 结构与 flag 链（均存 npc.qin.* / world.*）：
+ *   第一幕·凑情报（三碎片任意顺序，各自独立事件，flag 锁序防重复）
+ *     camp_clue_mao   灰猫情报网（mao stage≥2 @sewer，付 10 子弹或 aff≥60 免费）→ campClueMao
+ *     camp_clue_zhou  周响广播截听（zhou s2_1 后，campus 周三晚）            → campClueZhou
+ *     camp_clue_fang  方哨的北桥记录（fang s1_1 后 @checkpoint）             → campClueFang
+ *     三碎片集齐 → campReady（checkClues 文本副作用落旗，同 M5 met 联动写法）
+ *   第二幕·端据点 camp_depot（大型事件 @dock 夜间，qin 强制同行〔M18 companion〕）
+ *     潜入（melee 技能 / 手电暗号 判定链）或强攻（thug_squad 连战两场）；
+ *     显式撤退分支写 campRetreat（M6 败分支模式），事件 cd 4320 = 三日后可再来；
+ *     胜利写 campDepot + 缴获（子弹20 + 军急救 + 零件×2），并登记第三幕日历。
+ *   第三幕·堵孟九 camp3_ambush（campDepot 后 2–4 日，appointment eventId 强制触发
+ *     @checkpoint 夜；when:[] 不入常规池，同 lin_promise_1 写法）
+ *     胜利后处置选择：交给老秦了断（mengDead）/ 逼问内情放走（mengSpared），
+ *     均写 world.butcherFallen（M20 动态经济读这面旗）。
+ *   战后世界：camp_after_1~4 变体事件（cond butcherFallen:true）；
+ *     fang/zhao/su 各一条一次性搭话变体；qin_hunt 覆盖注册加 butcherFallen:false
+ *     门（引擎 events.register 按 id 替换，qin.js 文件未动），新增 qin_hunt2
+ *     「清理残党」循环接棒。
+ *
+ * 战败（M13-A 非死亡，被俘变体本模块自写）：本文件包装 G.engine.startCombat——
+ *   returnPassage 命中战役段落时改挂 onWin/onFlee/onLose 回调；战败走
+ *   campaignDefeat()（镜像 combat.js humanDefeat：洗劫/hp15/理智-10/昏迷180分），
+ *   醒在码头货舱（camp_defeat_p1），qin 来捞人；world.campLastLoss 记败于哪一幕。
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  var story = G.data.story, events = G.data.events;
+
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+
+  var LOCS = ['home', 'residential', 'market', 'hospital', 'police', 'bar', 'campus', 'metro',
+              'park', 'gas', 'mall', 'church', 'dock', 'checkpoint', 'sewer'];
+  // cond DSL 无否定，「不在某地」用其余 14 地点 anyOf 表达（同 dol.js）
+  function notAt(loc) {
+    return { anyOf: LOCS.filter(function (l) { return l !== loc; }).map(function (l) { return { loc: l }; }) };
+  }
+
+  var NIGHT_DOCK = [1170, 180];      // 19:30–03:00
+
+  // ---- 三碎片集齐 → campReady（文本副作用，幂等；集齐当场登记碰头备忘） -----
+  function checkClues() {
+    var e = G.engine;
+    if (e.getFlag('npc.qin.campReady')) return;
+    if (!e.getFlag('npc.qin.campClueMao') || !e.getFlag('npc.qin.campClueZhou') || !e.getFlag('npc.qin.campClueFang')) return;
+    e.setFlag('npc.qin.campReady', true);
+    var p = G.state.player;
+    G.state.calendar.appointments.push({ day: p.day + 1, minute: 1200, label: '与老秦碰头——入夜后的码头', eventId: null, done: false });
+  }
+
+  // ---- 第三幕日历登记：campDepot 后 2–4 日，检查站夜 21:00 强制触发 ----------
+  function bookBoss() {
+    var e = G.engine;
+    if (e.getFlag('npc.qin.campBossBooked')) return;
+    e.setFlag('npc.qin.campBossBooked', true);
+    var p = G.state.player;
+    var inDays = 2 + Math.floor(Math.random() * 3);
+    G.state.calendar.appointments.push({ day: p.day + inDays, minute: 1260, label: '堵孟九——北桥检查站', eventId: 'camp3_ambush', done: false });
+  }
+
+  // ---- 战役强制同行（复用 M18 companion；已有他人同行则先无罚解散） ----------
+  function forceQin() {
+    var w = G.state.world;
+    if (w.companion && w.companion.id === 'qin') return;
+    if (w.companion && G.engine.companionEnd) G.engine.companionEnd('dismiss');
+    w.companion = { id: 'qin', until: (G.state.player.day + 1) * 1440 };
+  }
+
+  // ==========================================================================
+  // 战败流程（M13-A 非死亡；镜像 combat.js humanDefeat，醒来段本模块自写）
+  // ==========================================================================
+  function campaignDefeat(which) {
+    var s = G.state, p = s.player;
+    var lostBullets = Math.floor(p.bullets / 2);
+    p.bullets -= lostBullets;
+    var lostItems = [];
+    p.inventory.slice().forEach(function (entry) {
+      var def = G.engine.itemDef(entry.id);
+      if (def && (def.type === 'key' || def.type === 'weapon')) return;
+      var take = Math.floor(entry.count / 2);
+      if (take > 0) {
+        G.engine.removeItem(entry.id, take);
+        lostItems.push({ name: (def && def.name) || entry.id, count: take });
+      }
+    });
+    s._defeatLoss = { bullets: lostBullets, items: lostItems };
+    if (G.engine.companionState && G.engine.companionState()) G.engine.companionEnd('defeat');
+    s.world.flags.thugDefeats = (s.world.flags.thugDefeats || 0) + 1;
+    G.engine.setFlag('world.campLastLoss', which);
+    G.engine.statSet('hp', 15);
+    G.engine.statAdd('sanity', -10);
+    s.combat = null;
+    G.engine.advance(180, { sleeping: true });
+    if (s._dead) return;
+    G.engine.openPassage('camp_defeat_p1');
+  }
+
+  // 包装 startCombat：returnPassage 命中战役战斗时，把「胜/逃/败」三路拆开——
+  // 胜=原 goto 段落，逃=撤退段（campRetreat/孟九突围），败=campaignDefeat 被俘。
+  // 仅命中下表的 id 生效，其余战斗原样透传（数据层扩展，引擎未动）。
+  var CAMP_BATTLES = {
+    'camp2_a1_p':  { flee: 'camp2_flee_p', loss: 'depot' },
+    'camp2_win_p': { flee: 'camp2_flee_p', loss: 'depot' },
+    'camp3_win_p': { flee: 'camp3_flee_p', loss: 'boss' }
+  };
+  var _origStartCombat = G.engine.startCombat;
+  G.engine.startCombat = function (encounterId, opts) {
+    opts = opts || {};
+    var hook = opts.returnPassage && CAMP_BATTLES[opts.returnPassage];
+    if (hook) {
+      var winP = opts.returnPassage;
+      opts = {
+        onWin:  function () { G.engine.openPassage(winP); },
+        onFlee: function () { G.engine.openPassage(hook.flee); },
+        onLose: function () { campaignDefeat(hook.loss); }
+      };
+    }
+    return _origStartCombat(encounterId, opts);
+  };
+
+  // ==========================================================================
+  // 第一幕·凑情报（三碎片，任意顺序）
+  // ==========================================================================
+
+  // ---- 碎片一：灰猫情报网 ---------------------------------------------------
+  events.register({
+    id: 'camp_clue_mao', type: 'story', npc: 'mao', when: ['talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'sewer', dayMin: 110, stage: { qin: { gte: 4 }, mao: { gte: 2 } },
+            flag: { 'npc.qin.s4_1': true, 'npc.qin.campClueMao': false } },
+    passage: 'camp_clue_mao_p1'
+  });
+
+  P('camp_clue_mao_p1',
+    '你提起孟九，[npc:mao]灰猫[/npc]拨油灯的手停了半拍。“姓孟的布防图，问的人不少，出得起价的不多。”她从铁皮柜里抽出一卷纸压在掌下，“十发[item]子弹[/item]。收你的是搬运费——这东西压在我手里，本来就是烫的。”',
+    [
+      { label: '数出十发子弹', cond: { has: { bullets: 10 } },
+        fx: { bullets: -10, goto: 'camp_clue_mao_p2' } },
+      { label: '“咱们之间，还谈搬运费？”', cond: { aff: { mao: { gte: 60 } } },
+        fx: { goto: 'camp_clue_mao_p2' } },
+      { label: '先不问这个', fx: {} }
+    ]);
+
+  P('camp_clue_mao_p2',
+    function () {
+      G.engine.setFlag('npc.qin.campClueMao', true);
+      checkClues();
+      var t = '图纸摊开，是码头收货点的布防：外围一个游哨半炷香绕一圈，库房门口守夜两人，换哨对暗号用手电——三短一长。[npc:mao]灰猫[/npc]指尖点着图上一处涂黑的角，“孟九这个人，我的线人凑不出他的脸，只凑得出他的习惯：疑心重，从不在同一间屋睡第二晚，手底下人只认调度不认人。你们要动他，先动他的货——货一断，他就得自己露头。”';
+      if (G.engine.getFlag('npc.qin.campReady')) {
+        t += '三块拼在一起，路就通了。把这些带给老秦，入夜后去码头闸口找他碰头。';
+      }
+      return t;
+    },
+    [{ label: '把图纸收进怀里', fx: { aff: { mao: 2 }, time: 30 } }]);
+
+  // ---- 碎片二：周响广播截听 -------------------------------------------------
+  events.register({
+    id: 'camp_clue_zhou', type: 'story', npc: 'zhou', when: ['enter', 'talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'campus', weekday: 2, timeRange: [1140, 1380], dayMin: 110, stage: { qin: { gte: 4 } },
+            flag: { 'npc.zhou.s2_1': true, 'npc.qin.s4_1': true, 'npc.qin.campClueZhou': false } },
+    passage: 'camp_clue_zhou_p1'
+  });
+
+  P('camp_clue_zhou_p1',
+    '广播室里只亮一盏工作灯，[npc:zhou]周响[/npc]把耳机往你手里塞，声音压得很低：“别出声——我扫频扫到一个加密糊弄鬼的频道，屠夫帮的调度台，每周三这个点报下周的押运。”耳机里电流咝咝作响，一个哑嗓子正在念数字。',
+    [{ label: '接过耳机听下去', fx: { goto: 'camp_clue_zhou_p2' } }]);
+
+  P('camp_clue_zhou_p2',
+    function () {
+      G.engine.setFlag('npc.qin.campClueZhou', true);
+      checkClues();
+      var t = '半个钟头，你们对着杂音抄下一张时刻表：大宗的货走水路进码头，隔几天一批，全在后半夜；报到大宗那一条时，哑嗓子加了一句“九爷亲自对数”。[npc:zhou]周响[/npc]摘下耳机揉着耳朵，“听见没有，别人的货报箱数，他的货报人名。这位孟九不放心任何人——大买卖，他必须自己到场。”';
+      if (G.engine.getFlag('npc.qin.campReady')) {
+        t += '三块拼在一起，路就通了。把这些带给老秦，入夜后去码头闸口找他碰头。';
+      }
+      return t;
+    },
+    [{ label: '把时刻表抄进烟盒背面', fx: { aff: { zhou: 2 }, time: 30 } }]);
+
+  // ---- 碎片三：方哨的北桥记录 -----------------------------------------------
+  events.register({
+    id: 'camp_clue_fang', type: 'story', npc: 'fang', when: ['talk'], once: false, cooldown: 1440, priority: 6,
+    cond: { loc: 'checkpoint', dayMin: 110, stage: { qin: { gte: 4 } },
+            flag: { 'npc.fang.s1_1': true, 'npc.qin.s4_1': true, 'npc.qin.campClueFang': false } },
+    passage: 'camp_clue_fang_p1'
+  });
+
+  P('camp_clue_fang_p1',
+    '听你说明来意，[npc:fang]方哨[/npc]往火堆里添了根柴，从背囊底层摸出一个用油布裹了三层的本子。“执勤记录。人都撤了，我还照规矩记——过卡的车、人数、时辰，一笔没落。”他翻到夹着弹壳的那一页递给你，“缠红布条的车队，都在这几页上。”',
+    [{ label: '“说吧，我听着。”', fx: { goto: 'camp_clue_fang_p2' } }]);
+
+  P('camp_clue_fang_p2',
+    function () {
+      G.engine.setFlag('npc.qin.campClueFang', true);
+      checkClues();
+      var t = '记录很干净：屠夫帮的车队每回过北桥都压着同一个时辰，头车两人探路，货车里外三人，殿后一辆改装皮卡。[npc:fang]方哨[/npc]用炭条在其中几行下划了线，“这几趟，副驾坐着个不下车的人，隔着挡风玻璃抽烟，别人给他点火。探路的车过完卡要回头打两下大灯，他的车才动。”他合上本子看你，“架子这么大的，整个屠夫帮数不出第二个。”';
+      if (G.engine.getFlag('npc.qin.campReady')) {
+        t += '三块拼在一起，路就通了。把这些带给老秦，入夜后去码头闸口找他碰头。';
+      }
+      return t;
+    },
+    [{ label: '把划线的几页记牢', fx: { aff: { fang: 2 }, time: 30 } }]);
+
+  // ==========================================================================
+  // 第二幕·端据点（大型事件 @dock 夜，qin 强制同行；cd 4320 = 三日后可再来）
+  // ==========================================================================
+  events.register({
+    id: 'camp_depot', type: 'story', when: ['enter', 'action'], once: false, cooldown: 4320, priority: 9,
+    cond: { loc: 'dock', timeRange: NIGHT_DOCK, flag: { 'npc.qin.campReady': true, 'npc.qin.campDepot': false } },
+    passage: 'camp2_p1'
+  });
+
+  P('camp2_p1',
+    function () {
+      forceQin();
+      var again = G.engine.getFlag('npc.qin.campRetreat')
+        ? '上回撤下来之后，据点果然加了岗，这几天风声松了些，游哨又开始偷懒。'
+        : '';
+      return '闸口的阴影里有人打了个响指——[npc:qin]老秦[/npc]比你先到，钢管用布条缠了防反光，腰上还别了你没见过的短斧。顺着他的下巴看过去：堆场深处那排库房亮着一盏孤灯，铁皮门前晃着烟头的火星，起重机的影子把整片场地割成一条条的黑。' + again +
+        '“布防、船期、车路，都对上了，货和账房都在里面。”他把烟盒背面的图塞回怀里，“今晚就是收网的头一刀。怎么切，你说。”';
+    },
+    [
+      { label: '走暗处，摸进去', fx: { goto: 'camp2_sneak1_p' } },
+      { label: '抄家伙，从正面打进去', fx: { combat: 'thug_squad', goto: 'camp2_a1_p' } },
+      { label: '今晚风声不对，先撤', fx: { goto: 'camp2_off_p' } }
+    ]);
+
+  P('camp2_off_p',
+    function () {
+      var w = G.state.world;
+      if (w.companion && w.companion.id === 'qin' && G.engine.companionEnd) G.engine.companionEnd('dismiss');
+      return '[npc:qin]老秦[/npc]盯着那盏孤灯看了半晌，没催你。“行。打没准备的仗，才是真败。”他把短斧插回腰后，陪你退出堆场，“货还得走水路，据点跑不了——挑个你手脚利索的晚上，再来。”';
+    },
+    [{ label: '（改日再来）', fx: { time: 20 } }]);
+
+  // ---- 潜入判定链 -----------------------------------------------------------
+  P('camp2_sneak1_p',
+    '你们贴着集装箱的锈壁往里挪，游哨的脚步声隔着两排货堆传过来，一圈半炷香，和灰猫的图分毫不差。绕到库房侧面还剩最后一段亮地——要么放倒游哨，要么骗过门口守夜的。',
+    [
+      { label: '摸上去，无声放倒游哨（75%）', cond: { skill: 'melee' },
+        fx: { roll: { chance: 0.75, win: { goto: 'camp2_sneak2_p' }, lose: { goto: 'camp2_alarm_p' } } } },
+      { label: '用手电打「三短一长」的换哨暗号（70%）', cond: { has: { item: 'flashlight' } },
+        fx: { roll: { chance: 0.7, win: { goto: 'camp2_sneak2_p' }, lose: { goto: 'camp2_alarm_p' } } } },
+      { label: '亮地过不去，改强攻', fx: { combat: 'thug_squad', goto: 'camp2_a1_p' } }
+    ]);
+
+  P('camp2_sneak2_p',
+    '游哨的位置空了，门口守夜的两个人还蹲在火盆边烤手，库房的铁皮门虚掩着一条缝，里面传来算盘珠子的响声。[npc:qin]老秦[/npc]朝你比了个手势：一左一右，同时动手，别让他们碰着墙上挂的锣。',
+    [{ label: '同时动手', fx: { combat: 'thug_patrol', goto: 'camp2_win_p' } }]);
+
+  P('camp2_alarm_p',
+    '暗处一声哨响炸开——露了行藏。库房的灯一盏接一盏亮起来，人声和铁器声从堆场深处涌过来，[npc:qin]老秦[/npc]把缠布的钢管抖开，退到你背后半步：“别慌，冲出来多少打多少——或者现在就撤，还来得及。”',
+    [
+      { label: '打多少算多少', fx: { combat: 'thug_squad', goto: 'camp2_a1_p' } },
+      { label: '撤，别恋战', fx: { goto: 'camp2_flee_p' } }
+    ]);
+
+  // ---- 强攻连战（第一场 → 中场 → 第二场） -----------------------------------
+  P('camp2_a1_p',
+    '第一拨人撂倒在起重机底下，堆场重新静下来，只剩库房那盏灯还亮着。[npc:qin]老秦[/npc]踩住一个哼哼的家伙翻他腰牌，皱眉，“调度的人不在这拨里，里面还有一手。”他甩掉钢管上的血，看你——是一鼓作气，还是见好就收。',
+    [
+      { label: '一鼓作气，往里打', fx: { combat: 'thug_squad', goto: 'camp2_win_p' } },
+      { label: '见好就收，撤', fx: { goto: 'camp2_flee_p' } }
+    ]);
+
+  // ---- 显式撤退（M6 败分支模式；cd 4320 已在事件触发时挂上=三日戒备期） ------
+  P('camp2_flee_p',
+    '你们退出堆场，身后的哨声追出两条街才断。回望过去，码头方向的灯一盏盏全点亮了，人影在库房前排成一线。[npc:qin]老秦[/npc]喘着气靠在墙上，半天憋出一句：“惊了蛇。这几晚他们睡觉都得睁只眼——等风头过了再来。”',
+    [{ label: '先撤回去', fx: { flag: { 'npc.qin.campRetreat': true }, stat: { sanity: -3 }, time: 30 } }]);
+
+  // ---- 端掉据点（潜入/强攻共用收尾） ----------------------------------------
+  P('camp2_win_p',
+    '库房里再没有站着的人。货架从地面码到房梁：贴封条的整箱罐头、成捆的[item]子弹[/item]、军绿色的急救箱，箱壁上一水的军用批号。账房的小桌翻倒在角落，散了一地货单。[npc:qin]老秦[/npc]用短斧把最大那只箱子撬开，站在那儿看了很久，声音哑下去，“三个月，他们就从这座城身上刮下来这么多。”他把翻出来的[item]押运簿[/item]拍在你手里，“搬。能搬多少搬多少，剩下的烧掉——不能再让它变回孟九的本钱。”',
+    [{ label: '清点缴获', fx: { bullets: 20, item: { militaryfirstaid: 1, sparepart: 2 },
+        flag: { 'npc.qin.campDepot': true, 'npc.qin.campRetreat': false }, aff: { qin: 6 },
+        milestone: '端掉屠夫帮的码头收货点', time: 60, goto: 'camp2_after_p' } }]);
+
+  P('camp2_after_p',
+    function () {
+      bookBoss();
+      return '火光从库房的气窗里透出来的时候，你们已经上了高处的货桥。[npc:qin]老秦[/npc]就着火光翻那本押运簿，翻到最后一页，手指停住。“大宗。走北桥检查站，孟九亲自对数。”他把那页撕下来折进怀里，看火把库房的房梁烧塌，“货断了，账烧了，他只剩这最后一趟——这回，他必须自己露头。日子我记下了，到时候北桥见。”';
+    },
+    [{ label: '（收网在即）', fx: { time: 30 } }]);
+
+  // ==========================================================================
+  // 第三幕·堵孟九（appointment eventId 强制触发 @checkpoint 夜；when:[] 不入常规池）
+  // ==========================================================================
+  events.register({ id: 'camp3_ambush', type: 'story', when: [], passage: 'camp3_p1' });
+
+  P('camp3_p1',
+    function (s) {
+      if (s.player.location === 'checkpoint') {
+        forceQin();
+        return '北桥检查站的探照灯早就死了，桥面只有月光。你和[npc:qin]老秦[/npc]伏在废弃岗亭后面，两头的路障拖回了路中央——方哨记录里的时辰一到，引擎声果然从桥那头压过来：头车两人探路，过了卡，回头打两下大灯。第二辆车稳稳停在灯影外，副驾的车窗摇下一条缝，烟头的火星明了一下。[npc:qin]老秦[/npc]的呼吸慢下来，一字一字：“是他。”';
+      }
+      return '你在别处听见了北桥方向隐约的引擎声——坏了，是今晚。等你想赶过去，时辰早就错过了。孟九的车队过完卡扬长而去，老秦独自蹲了半夜的岗亭，没等到你，他不动手。';
+    },
+    [
+      { label: '拦住车队', cond: { loc: 'checkpoint' }, fx: { goto: 'camp3_p2' } },
+      { label: '不能让老秦白等第二次——递话再堵下一趟', cond: notAt('checkpoint'),
+        fx: { appointment: { inDays: 2, minute: 1260, eventId: 'camp3_ambush', label: '堵孟九——北桥检查站' }, stat: { sanity: -2 } } }
+    ]);
+
+  P('camp3_p2',
+    function () {
+      var t = '路障被拖出来的声音让整支车队停死在桥面上。副驾的车门开了，下来的男人比卷宗照片上老了几岁，笑纹还是很正派，只是眼睛不笑。“秦队。”孟九把烟头在车顶按灭，“货是你烧的。我就说，这座城里还能让我亏本的，数来数去只剩你一个。”[npc:qin]老秦[/npc]从岗亭的影子里走出去，钢管拄在桥面上，“你叫我一声队长，就该知道我来干什么。把枪放下，我带你回警局——案卷我留着，一页没少。”孟九笑出声，朝身后摆了摆手，杂兵们的家伙立起来。“警局？临港连活人的规矩都没了，你还揣着一本死人的规矩。”';
+      if (G.engine.getFlag('npc.qin.rescueLate')) {
+        t += '他的目光越过老秦落在你身上，“北巷那晚去搬救兵的就是你吧？回来得不算太迟——今晚可没处搬去。”';
+      } else if (G.engine.getFlag('npc.qin.sawCargo')) {
+        t += '你认得车斗里那种贴封条的货箱——和商场外围、和码头库房里的，同一个来路。这批军火过了桥，这座城又要多流多少血。';
+      }
+      return t;
+    },
+    [
+      { label: '“规矩死没死，打过才知道。”', fx: { combat: 'thug_boss_pack', goto: 'camp3_win_p' } },
+      { label: '问他为什么杀老秦的搭档', fx: { goto: 'camp3_p2b' } }
+    ]);
+
+  P('camp3_p2b',
+    '孟九的笑收了收。“老周？他自己摸上船来的。不收钱，不闭嘴，还要劝我回头。”他摊开手，像在说一件搬货的小事，“队长教过我们：办案要办到底。我只是换了个案由。”[npc:qin]老秦[/npc]手背上的青筋绷起来，钢管在桥面上磕了一声，再没什么好问的了。',
+    [{ label: '动手', fx: { combat: 'thug_boss_pack', goto: 'camp3_win_p' } }]);
+
+  P('camp3_flee_p',
+    '桥面上乱成一团，孟九早就退回车里，车队顶开半边路障冲了过去，尾灯很快缩成两个红点。[npc:qin]老秦[/npc]追出十几步，停住，把钢管狠狠杵在桥面上。“跑得了这趟，跑不了下趟。他的货就剩这一条道——我再去要日子。”',
+    [{ label: '再堵下一趟', fx: { appointment: { inDays: 2, minute: 1260, eventId: 'camp3_ambush', label: '堵孟九——北桥检查站' }, stat: { sanity: -3 }, time: 30 } }]);
+
+  P('camp3_win_p',
+    '最后一个杂兵滚下桥坡跑了，没人管他。孟九靠着车轮坐在地上，捂着肋下，血从指缝里渗出来，人还笑得动：“行……队长带出来的，果然都是好手。”[npc:qin]老秦[/npc]一脚踢开他够向枪的手，钢管的一端压在他胸口，转头看你——这一刀怎么收，他把话让给了你。',
+    [
+      { label: '把他交给老秦，做个了断', fx: { goto: 'camp3_end_kill_p' } },
+      { label: '拦一拦——先逼问屠夫帮的底，再放他一条生路', fx: { goto: 'camp3_end_spare_p' } }
+    ]);
+
+  P('camp3_end_kill_p',
+    '你退开半步。[npc:qin]老秦[/npc]在孟九面前蹲下来，把那份[item]旧案卷宗[/item]从怀里抽出来，一页一页念给他听——案由，人证，日期，老周的名字。念完，他合上卷宗。“判了。”枪声在桥洞底下滚了很久。老秦站起来的时候背对着你，肩膀塌了一寸，像卸下了扛了三个月的东西，“替我记着：这不是报仇，是结案。”[blood]桥面的血[/blood]顺着伸缩缝往江里滴。',
+    [{ label: '陪他在桥上站到天亮', fx: { flag: { 'npc.qin.mengDead': true, 'world.butcherFallen': true },
+        aff: { qin: 8 }, stat: { sanity: -3 }, time: 120, milestone: '孟九伏法，屠夫帮塌了台' } }]);
+
+  P('camp3_end_spare_p',
+    '你按住老秦的钢管。孟九看懂了，竹筒倒豆子倒得飞快：屠夫帮的家底就是这条水路，货源断了，几个头目已经在抢地盘，火并就在这几天；余下的窝点、放哨的楼口，他一个一个报，你一条一条记。[npc:qin]老秦[/npc]从头到尾没说话，最后把钢管收回来，侧身让开一条路。“滚。再让我在临港看见你，案卷上就添你最后一笔。”孟九扶着桥栏起身，走出十几步，回头看了老秦一眼，什么也没说，一瘸一拐地消失在桥那头的黑里。',
+    [{ label: '收好那份口供', fx: { flag: { 'npc.qin.mengSpared': true, 'world.butcherFallen': true },
+        aff: { qin: -3 }, time: 120, milestone: '孟九远走，屠夫帮散了' } }]);
+
+  // ==========================================================================
+  // 战败被俘（campaignDefeat 唯一出口；qin 来捞人）
+  // ==========================================================================
+  P('camp_defeat_p1',
+    function (s) {
+      s.player.location = 'dock';
+      var loss = s._defeatLoss, parts = [];
+      if (loss) {
+        if (loss.bullets > 0) parts.push('子弹×' + loss.bullets);
+        (loss.items || []).forEach(function (it) { parts.push(it.name + '×' + it.count); });
+      }
+      var lossStr = parts.length
+        ? '身上被翻了个底朝天，少掉的东西数得出来：[item]' + parts.join('、') + '[/item]。'
+        : '身上被翻了个底朝天，他们没搜出几样值钱的。';
+      var head = '铁锈味。你在晃动的黑暗里醒过来，手脚被塑料绳捆着，身下是码头货舱冰冷的铁底板，[blood]肋骨[/blood]随着每一次呼吸抽着疼，' + lossStr +
+        '不知过了多久，舱门被撬棍别开一条缝，火光和冷风一起灌进来——[npc:qin]老秦[/npc]半边脸挂着血，割断绳子把你拖出去，一路没说话，直到上了岸才把你按在缆桩上坐好。';
+      if (G.engine.getFlag('world.campLastLoss') === 'boss') {
+        return head + '“孟九的货过了桥。”他替你揉着勒出血痕的手腕，下手很轻，话却咬得很紧，“人没了可以再堵，命没了就全完了。记住这口气——下一趟，连本带利。”';
+      }
+      return head + '“据点惊了，这几晚动不得。”他把自己的外套裹在你身上，蹲下来跟你平视，“输一仗死不了人，输了命才叫输。养好伤，风头一过，我们接着来。”';
+    },
+    [
+      { label: '“下一趟，我还去。”', cond: { flag: { 'world.campLastLoss': 'boss' } },
+        fx: { appointment: { inDays: 2, minute: 1260, eventId: 'camp3_ambush', label: '堵孟九——北桥检查站' }, goto: 'camp_defeat_p2' } },
+      { label: '撑着缆桩站起来', cond: { flag: { 'world.campLastLoss': 'depot' } }, fx: { goto: 'camp_defeat_p2' } }
+    ]);
+
+  P('camp_defeat_p2',
+    '[npc:qin]老秦[/npc]架着你的胳膊走出码头，天边已经有点发灰。“是我把你带进这局里的。”他在岔路口停下，替你紧了紧外套的领子，“所以你每一次倒下，我都会去把你捞回来——这条记在我账上，比孟九那笔还靠前。”',
+    [{ label: '（先回去养伤）', fx: { aff: { qin: 2 }, time: 30 } }]);
+
+  // ==========================================================================
+  // 战后世界变体（cond world.butcherFallen:true；butcher_world_1~4 已在
+  // worldevents.js 加 butcherFallen:false 门，两组互斥）
+  // ==========================================================================
+
+  // ---- 权力真空：散兵游勇抢地盘 ---------------------------------------------
+  P('camp_after_1_p',
+    '街口那辆屠夫帮的改装皮卡还停在老地方，红布条被人扯了，车斗里两拨人正为半车物资推搡叫骂——没了孟九管账，这座城的烂账改成谁的拳头硬归谁。',
+    [
+      { label: '轰走他们，东西留下', fx: { combat: 'thug_patrol' } },
+      { label: '狗咬狗，绕开', fx: { stat: { sanity: -1 } } }
+    ]);
+  events.register({
+    id: 'camp_after_1', type: 'random', priority: 2, cooldown: 2880, passage: 'camp_after_1_p',
+    cond: { anyOf: [{ loc: 'residential' }, { loc: 'market' }], chance: 0.12, flag: { 'world.butcherFallen': true } }
+  });
+
+  // ---- 码头易主 -------------------------------------------------------------
+  P('camp_after_2_p',
+    '码头的封条被撕得干干净净，烧塌的库房前，几个苦力自发把剩下的货分堆过秤，嗓门大得半个江面都听得见——缠红布条的监工没了，他们头一回给自己扛活。有人认出你，往你这边扬了扬手里的秤杆。',
+    [{ label: '扬手回礼', fx: { stat: { sanity: 2 }, time: 10 } }]);
+  events.register({
+    id: 'camp_after_2', type: 'random', priority: 1, cooldown: 2880, passage: 'camp_after_2_p',
+    cond: { loc: 'dock', chance: 0.12, flag: { 'world.butcherFallen': true } }
+  });
+
+  // ---- 收账队消失后的商户口风 -----------------------------------------------
+  P('camp_after_3_p',
+    '摊贩们头一回敢把整箱的货摆到门脸外头晒太阳。你路过时，两个摊主正压着嗓子交换新闻：“收账的半个月没露头了，说是那位孟爷栽在北桥……”“栽在谁手里？”“说是个老警察，还带着个帮手。”话头到这儿停了，两双眼睛在你背后跟了很久。',
+    [{ label: '只当没听见', fx: { stat: { sanity: 2 } } }]);
+  events.register({
+    id: 'camp_after_3', type: 'random', priority: 1, cooldown: 2880, passage: 'camp_after_3_p',
+    cond: { anyOf: [{ loc: 'market' }, { loc: 'mall' }], chance: 0.12, flag: { 'world.butcherFallen': true } }
+  });
+
+  // ---- 孟九旧部残党偶遇 -----------------------------------------------------
+  P('camp_after_4_p',
+    function () {
+      var head = '拐角处撞上两个熟面孔——胳膊上还留着红布条勒出的印子，孟九的旧部。他们也认出了你，手在家伙上按了一按。';
+      if (G.engine.getFlag('npc.qin.mengDead')) {
+        return head + '按了一按，又松开了。为一个死人拼命不划算，这笔账他们算得很快，可眼睛里那点火没灭干净。';
+      }
+      if (G.engine.getFlag('npc.qin.mengSpared')) {
+        return head + '其中一个朝你努了努嘴，“九爷走前放了话，北桥的账翻篇，谁也不许再提。”话是这么说，两个人退开的步子一直没敢背对你。';
+      }
+      return head;
+    },
+    [
+      { label: '拔家伙', fx: { combat: 'thug_patrol' } },
+      { label: '让开路，各走各的', fx: { stat: { sanity: -1 } } }
+    ]);
+  events.register({
+    id: 'camp_after_4', type: 'random', priority: 2, cooldown: 4320, passage: 'camp_after_4_p',
+    cond: { anyOf: [{ loc: 'residential' }, { loc: 'gas' }, { loc: 'mall' }, { loc: 'dock' }], chance: 0.1, flag: { 'world.butcherFallen': true } }
+  });
+
+  // ---- fang / zhao / su 一次性搭话变体 --------------------------------------
+  P('camp_talk_fang_p',
+    '[npc:fang]方哨[/npc]往你手里塞了条烤得焦香的[item]肉干[/item]。“北桥那晚的动静，我在哨位上听了全场。”他难得地把背挺直了些，“那份执勤记录，三个月来头一回派上正经用场——替我谢谢那位秦队长，就说北桥的哨，还有人站着。”',
+    [{ label: '收下肉干', fx: { aff: { fang: 2 }, item: { driedmeat: 1 } } }]);
+  events.register({
+    id: 'camp_talk_fang', type: 'story', npc: 'fang', when: ['talk'], once: true, priority: 3,
+    cond: { met: 'fang', flag: { 'world.butcherFallen': true } }, passage: 'camp_talk_fang_p'
+  });
+
+  P('camp_talk_zhao_p',
+    '[npc:zhao]赵铁[/npc]正拿改锥拆柜台底下一个小铁匣，见你来，把匣子整个拎给你看——里面是空的。“留了三个月的「过路钱」，每周一格，比给闺女上坟还准时。”他把铁匣扔进废品堆，拍了拍手，“往后这格钱，换成给你留的好货。”',
+    [{ label: '“这买卖划算。”', fx: { aff: { zhao: 2 } } }]);
+  events.register({
+    id: 'camp_talk_zhao', type: 'story', npc: 'zhao', when: ['talk'], once: true, priority: 3,
+    cond: { met: 'zhao', flag: { 'world.butcherFallen': true } }, passage: 'camp_talk_zhao_p'
+  });
+
+  P('camp_talk_su_p',
+    '打烊前的空当，[npc:su]苏曼[/npc]难得给自己也倒了一杯，隔着吧台碰了碰你的杯沿。“老秦守这个店三年，夜里睡觉都朝着门。昨晚我头一回听见他打呼。”她抿了一口，眼圈有点红，笑意是真的，“他那笔账没人还得清，可你替他划掉了最重的一行——这杯记我账上。”',
+    [{ label: '和她碰杯', fx: { aff: { su: 2 }, stat: { sanity: 3 } } }]);
+  events.register({
+    id: 'camp_talk_su', type: 'story', npc: 'su', when: ['talk'], once: true, priority: 3,
+    cond: { met: 'su', flag: { 'world.butcherFallen': true } }, passage: 'camp_talk_su_p'
+  });
+
+  // ---- qin_hunt 收网后停用（覆盖注册加 butcherFallen:false 门；qin.js 未动） --
+  events.register({
+    id: 'qin_hunt', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 4320, priority: 2,
+    cond: {
+      anyOf: [{ loc: 'bar', timeRange: [1140, 120] }, { loc: 'police', timeRange: [480, 1020] }],
+      stage: { qin: { gte: 4 } }, flag: { 'world.butcherFallen': false }
+    },
+    passage: 'qin_hunt_p1'
+  });
+
+  // ---- qin_hunt2 清理残党循环（接棒 qin_hunt，不再「扫点」） ------------------
+  events.register({
+    id: 'qin_hunt2', type: 'story', npc: 'qin', when: ['talk'], once: false, cooldown: 4320, priority: 2,
+    cond: {
+      anyOf: [{ loc: 'bar', timeRange: [1140, 120] }, { loc: 'police', timeRange: [480, 1020] }],
+      stage: { qin: { gte: 4 } }, flag: { 'world.butcherFallen': true }
+    },
+    passage: 'qin_hunt2_p1'
+  });
+
+  P('qin_hunt2_p1',
+    function () {
+      var mid = G.engine.getFlag('npc.qin.mengSpared')
+        ? '红圈全划掉了，只剩几个铅笔点的散点。“孟九放出去了，散在城里的旧部得有人看着——别让哪个又攒起一摊。”'
+        : '红圈全划掉了，只剩几个铅笔点的散点。“树倒了，猢狲还得散干净——别让哪个又攒起一摊。”';
+      return '[npc:qin]老秦[/npc]把烟盒背面那张城区图递给你。' + mid + '他把钢管扛上肩，“清残党，动静小，走一趟？”';
+    },
+    [
+      { label: '跟他去清一处', fx: { time: 60, combat: 'thug_patrol', goto: 'qin_hunt2_p2' } },
+      { label: '这两天缓缓再去', fx: {} }
+    ]);
+
+  P('qin_hunt2_p2',
+    '散点清了，几个不成气候的角色一哄而散。[npc:qin]老秦[/npc]把窝棚里搜出的几发子弹分你一半，在图上把那个铅笔点抹掉——他没说「又近了一步」，这话用不上了，他只拍了拍图，“这座城的账，往后是一笔一笔往回赚的。”',
+    [{ label: '收好战利品', fx: { bullets: 6, stat: { energy: -8 }, aff: { qin: 2 }, time: 90 } }]);
 
 })();
 
