@@ -34,8 +34,8 @@
 | M11 | 地图地理重排 + 江水/雨水/煮水系统 | sonnet | ✅ 完成 |
 | M12 | 全库文本逻辑自查（首次/重复口径等） | fable | ✅ 完成 |
 | M13 | DoL 模式增强（战败非死亡/打工/魅力诱惑做爱脱身/NPC邀约） | fable | ✅ 完成 |
-| M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ⬜ 已拍板，待开工 |
-| M15 | 入冬季节压力（温度/寒冷值/水源联动） | opus | ⬜ 已拍板，待开工 |
+| M14 | 服装与外观系统（三槽三属性/耐久/存档迁移） | opus | ✅ 完成 |
+| M15 | 入冬季节压力（温度/寒冷值/水源联动） | opus | ✅ 完成 |
 | M16 | QoL 杂项（收音机/图鉴统计/多存档槽/清洁度） | opus | ⬜ 已拍板，待开工 |
 | M17 | 家园升级（门窗/雨水收集/菜园/储物柜） | sonnet | ⬜ 已拍板，待开工 |
 | M18 | NPC 同行作战 | opus | ⬜ 已拍板，待开工 |
@@ -51,6 +51,45 @@ M2 与 M3 可并行，M7 与 M8 可并行（不同文件，无冲突）。
 每个模块开一个新窗口，用 `/model` 切到进度表标注的模型再开工。
 
 ## 交接备注（每模块完成后追加，最新在上）
+
+### M15（2026-07-17, opus）
+入冬季节压力实装。改动：`time.js`（TUNE 加 M15 常量段 + 季节 helper `seasonTier/seasonTierNow/seasonNow/isWinter` + advance 每步 `coldStep()` 累积/消退寒冷 + 寒冷阈值 + dayRollover 刷 `world.season`）、`state.js`（stats 加 `cold:0` + world 加 `season` + checkCond 新增 `season` 门）、`save.js`（**SAVE_VERSION 2→3** + `migrateV2toV3` 补 cold + normalize 兜底）、`items.js`（新增 `firewood` 柴火 material）、`locations.js`（`locationDesc` 追加季节句 + `gatherWater` 深冬破冰/冬季接雪 + `boilWater` 兼取暖 + 新增 `makeFire` 与「生火取暖」warm 行动挂 12 室外地点）、`combat.js`（`makeEnemy` 冬季非人类 speed-1 下限1）、`trade.js`（`itemPriceNow` 冬季保暖装涨价 + `winterStock` 上新柴火 + shopBuy 走涨价后价）、`render.js`（DATA_ACTION_FN 加 warm + 状态条冬季/有寒冷时追加「寒冷」条）、`panels.js`（身体面板加寒冷 + 商店买价走 itemPriceNow 带 ❄ 标）、`style.css`（`.statusbar-fill.cold`）、`season.js`（**新文件**，寒潮预警链 + 雪天氛围 7 + 冻毙流浪者 3）、`index.html`+`tools/build.js`（引入 season.js）、`docs/Schema.md`（cold 阈值/季节节/cond season/SAVE_VERSION 登记）。`dist/game.html` 重打（574.4KB，**24 脚本**）。
+
+**季节档位表**：`seasonDayEarly=140`（≈12/1 入初冬）、`seasonDayDeep=170`（≈12/31 入深冬）；开局 day90=10/12 秋季无寒冷压力。`world.season`=`autumn|earlywinter|deepwinter`，缓存于日结算，**所有消费方一律走 `G.engine.seasonTierNow()` 按当前日算**（兼容缺字段老档，不依赖缓存）。
+
+**cold 数值（全部在 `time.js TUNE`）**：室外每 10 分钟寒冷 = `coldOutPer10[档] - 全身warmth×warmthRelief`，`coldOutPer10=[0,1.1,1.9]`、`warmthRelief=0.10`（每点保暖抵 0.1）；室内消退 `coldIndoorPer10=2.0`（保暖足够 gain≤0 时按半速缓退）；寒潮 `world.coldSnap` 期间室外 +`coldSnapSurge=0.8`；煮水取暖 `boilWarmRelief=12`、生火取暖 `fireWarmRelief=40`（消耗 1 柴火）；阈值 `T_COLD_CAP=50`（精力上限压到 `100-(cold-50)`）、`T_COLD_HP=80`（每步 `coldHpPer10=0.5` 掉血）。**换算**：基础装 warmth~4 → 初冬 0.7/步（约 12h 到 50）、深冬 1.5/步（约 5.5h 到 50）；羽绒服+保暖裤+战靴 warmth~14 → 初冬≈0、深冬 0.5/步（约 16h 到 50，且睡一觉即清零）。商店涨价 `winterWarmMarkup=1.5`（warmth≥3 的服装）。
+
+**水源联动（M11）**：深冬「去江边取水」破冰→耗时翻倍（15→30 分）；冬季「接雨水」实为接雪化水→产出减半（50% 概率空手，失败不耗玻璃瓶）；「烧水煮沸」兼取暖（cold>0 时消退 12）。丧尸：冬季非人类 speed-1（下限 1）——好逃、但玩家消耗更大，「敌弱我更弱」。
+
+**机器人测试结果（scratchpad 未入库：m15_test.js 90 项 / m15_survival.js / m15_integrity.js 253 项，全绿 0 断链 0 告警）**：
+- **【必测】胜任机器人 60 天生存（day90→150，跨入初冬 day140）：5/5**（全 hp100 抵达，warm 装 + 夜里回家睡觉，初冬寒冷≈0）——达标（≥4/5）。
+- 诊断：深入深冬 110 天（day90→200）竞争力 5/5（深冬 cold 稳定 0–8，靠满保暖 + 每夜室内清零）；**教训对照**：深冬穿垫底装、不生火不回屋的疏忽玩家（隔离食水精力死因）**5/5 于 day174 冻死**（maxCold 100，失温掉血）——证明寒冷有牙齿、「住家躺平也不安全（饥渴逼你出门），出门不保暖会死」两头都成立。
+- 逻辑单测覆盖：季节档切换、寒冷累积/消退/满保暖压制、精力上限+失温掉血阈值、煮水/生火取暖、破冰耗时翻倍、接雪半产出、冬季丧尸减速+人类不减、商店涨价+上新+shopBuy 扣费、v2→v3 迁移+导入往返带 cold、season cond 四态、season.js 13 passage/13 event 注册+text 深冬+寒潮 0 抛错。全库 253 项引用完整（含 season.js 冻毙流浪者 hoodie/work_boots/down_jacket 引用、寒潮 appointment eventId）。
+
+**已知取舍 / 留给 M12 式自查**：① 冻毙流浪者做成「共享池」跨 12 室外地点触发（3 变体，priority2/cd 2880~4320），**未逐地点各写 2–3 条**——沿用 M8 世界事件共享池的体量取舍（逐地点 30–45 条不划算），任务书「各地点 2–3 条」按此宽松兑现，雪天氛围 7 条同为共享池；② 「接雨水」按钮文案在冬季仍显示「接雨水」，靠 gatherWater 返回文案点明「接的是雪」（动态改 label 属 UI 层，从简未做），非雨/雪天该行动本就不可见（world.rainDay 门）；③ 寒潮链 coldsnap_start/end 依赖 appointment 的 eventId 强制触发（同 M8 尸潮/雨天三处），若后续改 dueAppointments 逻辑要回归；④ 状态条「寒冷」仅在 isWinter 或 cold>0 时出现（非冬季无噪声）；⑤ 新增道具 id `firewood`、行动 id `make_fire`（12 地点）、`riverwater`/`rainwater` 冬季语义变化——文本自查注意生火行动仅 cold>0 显示是预期。
+
+### M14（2026-07-17, opus）
+服装与外观系统实装。改动：`items.js`（18 件 clothing + 针线包 + equip/unequip/repairClothing）、`state.js`（player.outfit + initialOutfit/clothingEff/outfitWarmth·Armor·Decency/isDressed/damageClothing + addItem 支持 clothing 独立耐久条目 + cond DSL 加 decency 字段）、`save.js`（**SAVE_VERSION 1→2** + migrateV1toV2 + normalize 补 outfit）、`combat.js`（enemyTurn 护甲减伤 + 损衣）、`panels.js`（身体面板着装区块 + 背包服装页签/穿脱）、`render.js`（顺手修：战斗「用道具」选择器改为只列有 fx 的消耗品，防误耗新增的无 fx 服装——同时消掉了旧的材料/关键物可被战斗误耗的边角）、`style.css`（.outfit-* 样式）、`trade.js`/`locations.js`/`worldevents.js`（服装上架点）、`clothing.js`（**新文件**，5 名 NPC 低体面反应）、`index.html`+`tools/build.js`（引入 clothing.js）、`docs/Schema.md`（clothing 类型 + SAVE_VERSION 登记）。`dist/game.html` 重打（551.8KB，23 脚本）。
+
+**给 M15 的 warmth 接口**：`G.engine.outfitWarmth()` 返回全身三槽有效保暖合计（撕破件已减半）。基础装约 4–5，羽绒服+保暖裤+战靴可堆到 ~14。M15 的寒冷值消费直接读这个数即可。
+
+**最终字段 Schema**：`items[id] = {name, type:'clothing', slot:'top'|'bottom'|'shoes', warmth, armor, decency, durMax, price, weight, desc}`；穿戴态 `player.outfit = {top:{id,dur}|null, bottom:.., shoes:..}`。`state.clothingEff(entry)` → `{warmth,armor,decency,torn}`：耐久 `dur < durMax*0.5` 判定 `torn`，三属性 `Math.floor(×0.5)`；`dur<=0` 由 `damageClothing` 直接移除该槽（报废）。
+
+**服装清单与数值表（18 件；warmth/armor/decency/durMax/price）**：
+- 上装：worn_tshirt 1/0/2/20/4（男初始）、worn_blouse 1/0/3/20/4（女初始）、hoodie 3/1/3/30/12、leather_jacket 3/**4**/4/40/40、down_jacket **6**/2/4/35/45、tactical_vest 1/**6**/3/50/60、raincoat 2/1/3/25/10。
+- 下装：worn_jeans 2/1/3/25/5（初始）、cargo_pants 3/2/3/35/15、thermal_pants 5/1/3/30/20、tactical_pants 2/4/3/45/35、short_skirt 0/0/1/15/6（低体面梗）。
+- 鞋：worn_sneakers 1/0/2/20/4（男初始）、worn_flats 1/0/2/18/4（女初始）、work_boots 2/2/3/40/18、combat_boots 3/3/3/50/30、rubber_boots 2/1/2/30/8。
+- 修补：sewingkit（针线包，material，price8）——身体面板「修补」按钮消耗 1 个把某槽耐久补满。
+
+**护甲平衡（自测数据）**：受击减伤 = `floor(全身armor合计 / 4)` 点（下限 1），满配（tactical_vest+tactical_pants+combat_boots=armor13 → soak3）对屠夫帮打手[10,20]原始伤害的实测减伤 **20%**，**远低于防御动作的 60%**——红线（护甲减伤不得超过防御价值）守住，护甲是叠加在防御之上的被动而非替代。中期常见搭配 armor~8 → soak2 ≈ 13%，很温和。损衣：每次被击中 `clothWearChance=0.15` 磨损随机一件在穿服装 1 点。
+
+**存档迁移（本模块最大风险点，已重点验证）**：SAVE_VERSION 2；`migrate()` 里 `case 1: migrateV1toV2` 给无 outfit 的老档按性别补默认初始装，`normalize()` 兜底再补一次（防手工档/极端空档）。**v1→v2 迁移 + 满进度导入 + 导出往返全部回归通过**（新老档、男女、耐久保留、报废后槽变空）。
+
+**文本适配（决定性场景，工作量红线内）**：只做低体面 NPC 反应——`clothing.js` 5 名 NPC（苏曼/赵铁/陈神父/方哨/林晚）各一句氛围台词，`cond.decency<=2`（相当于只剩垫底装再撕破、或穿短裙这类）+ met 门 + 各自作息地点，priority 1 / chance .35 / cd 2880，纯氛围不锁剧情（任务书约束）。**成人场景「宽衣」分支**：提供 `G.engine.isDressed()`（上装+下装两槽都在）供成人段落 text 函数按需分叉，但 **M6/M7 既有亲密段落维持原样未改写**——延续 M13「加侧路不重写既有剧情文件」的取舍（改写风险 + 工作量红线），新增成人内容可直接读该接口。
+
+**服装来源**：赵铁货架（zhao_main tier0 hoodie/worn_jeans/work_boots/针线包；tier40 down_jacket/thermal_pants/cargo_pants/raincoat；tier70 leather_jacket）、方哨军品（fang_ammo tier0 tactical_vest/tactical_pants/combat_boots）、mall 搜刮表（三档各挂 2 件，含稀有档 leather_jacket/down_jacket）、mall 户外柜稀有事件 rare_mall_1（加发 leather_jacket+combat_boots）。
+
+**测试（scratchpad 未入库：m14_test.js 54 项 / m14_combat.js 6 项，全绿，0 告警）**：初始装按性别发放、有效属性/撕破减半、equip/unequip/repair、v1→v2 迁移 + 空档 normalize、导出导入往返、护甲 soak 计算 + 原始减伤 20%<60% 红线、损衣累积报废、人类战败在穿服装保留、全库 230 事件 passage 引用 0 断链、decency 事件/段落注册 + cond 门通过/不通过、isDressed。**已知边角**：① 战败洗劫会没收背包里的**备用**服装（可堆叠条目减半），在穿的不受影响——合理（劫匪抢包不扒身）；② decency 事件用新增 cond.decency 字段，与既有 skill/met 同为扩展字段，已登记 Schema；③ short_skirt 是 DoL 风味的低体面梗（decency1），不影响生存，玩家自选。
 
 ### M13（2026-07-17, fable）
 DoL 模式增强 A/B/C/D 四项全部实装。改动：`js/data/story/dol.js`（**新文件**，37 段落 + 23 事件）、`combat.js`（战败分流）、`state.js`（fx.roll 扩展）、`locations.js`/`worldevents.js`（5 处人类遇敌加脱身选项）、`index.html` + **`tools/build.js`**（新文件引入）、`docs/Schema.md`（fx.roll 登记）、`docs/NPC设定.md`（M13 通用互动登记节）。`dist/game.html` 重打（531.7KB，22 个脚本）。存档结构未动（新增 flag 全走既有 player.flags/storyFlags/world.flags）。

@@ -127,6 +127,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .statusbar-fill.hunger { background: var(--warn); }
 .statusbar-fill.thirst { background: var(--info); }
 .statusbar-fill.energy { background: var(--ok); }
+.statusbar-fill.cold { background: #6fa8c7; }
 .statusbar-fill.low { filter: brightness(1.3); animation: pulse 1.4s ease-in-out infinite; }
 
 /* ---- 主区域 ------------------------------------------------------------------ */
@@ -264,6 +265,20 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .body-stat .fill { height: 100%; border-radius: 4px; }
 .body-stat .note { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
 .body-stat.abnormal .label .val, .body-stat.abnormal .note { color: var(--danger); }
+
+/* ---- 着装区块（M14） ---------------------------------------------------------- */
+.outfit-summary { font-size: 13px; color: var(--fg-dim); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.outfit-slots { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+.outfit-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 6px; background: #26231f; }
+.outfit-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.outfit-slot { font-size: 12px; color: var(--fg-dim); }
+.outfit-name { font-size: 14px; color: var(--fg-bright); }
+.outfit-name.empty { color: var(--fg-dim); font-style: italic; }
+.outfit-name.torn { color: var(--danger); }
+.outfit-dur { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.outfit-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.outfit-acts .btn { padding: 4px 10px; font-size: 13px; }
 
 /* ---- 地图面板（M11：按 mapPos 真实地理摆放，替代原环形布局） ------------------- */
 .map-wrap { width: 100%; overflow: hidden; }
@@ -423,24 +438,27 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     NPC_IDS.forEach(function (id) {
       npcs[id] = { met: false, alive: true, affinity: 0, stage: 0, storyFlags: {}, vars: {} };
     });
+    var gender = opts.gender === 'f' ? 'f' : 'm';
     return {
       meta: { version: G.SAVE_VERSION || 1, saveTime: 0 },
       player: {
         name: opts.name || '',
-        gender: opts.gender === 'f' ? 'f' : 'm',
+        gender: gender,
         // 时间锚点：第 90 天 = 10月12日周日，开局早晨醒来
         day: 90, minute: 480,
         location: 'home',
         stats: { hp: 100, hunger: 70, thirst: 70, energy: 80,
-                 sanity: 80, alcohol: 0, addiction: 0, infection: 0 },
+                 sanity: 80, alcohol: 0, addiction: 0, infection: 0,
+                 cold: 0 },   // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
         bullets: 20,
         weapon: null,                 // {id, durability}
-        inventory: [],                // [{id, count}]；武器条目额外带 durability
+        outfit: initialOutfit(gender),// M14：三槽服装 {top,bottom,shoes}，每槽 {id,dur}|null
+        inventory: [],                // [{id, count}]；武器/服装条目额外带 durability
         skills: {},
         flags: {}
       },
       npcs: npcs,
-      world: { flags: {}, cooldowns: {}, _firedDay: {} }, // _firedDay: scheduled 每日去重
+      world: { flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn' }, // _firedDay: scheduled 每日去重；season: M15 季节缓存
       calendar: { appointments: [], milestones: [] },
       scavenge: {}
     };
@@ -539,8 +557,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (n <= 0) return removeItem(id, -n);
     var def = itemDef(id);
     var inv = S().player.inventory;
-    // 武器每把独立成条目并带耐久（可堆叠数量仅对非武器有效）
-    if (def && def.type === 'weapon') {
+    // 武器/服装每件独立成条目并带耐久（可堆叠数量仅对无耐久物资有效）
+    if (def && (def.type === 'weapon' || def.type === 'clothing')) {
       for (var k = 0; k < n; k++) {
         inv.push({ id: id, count: 1, durability: def.durMax || 1 });
       }
@@ -587,6 +605,77 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.engine.carryCap = carryCap;
   G.engine.isOverweight = isOverweight;
 
+  // ---- 服装（M14） --------------------------------------------------------
+  // 开局按性别发一套垫底基础装（worn 系列）。老档迁移走 save.js DEFAULT_OUTFIT。
+  var CLOTH_SLOTS = ['top', 'bottom', 'shoes'];
+  G.CLOTH_SLOTS = CLOTH_SLOTS;
+  function initialOutfit(gender) {
+    var def = itemDef; // 取 durMax
+    function piece(id) { var d = def(id); return { id: id, dur: (d && d.durMax) || 1 }; }
+    return gender === 'f'
+      ? { top: piece('worn_blouse'), bottom: piece('worn_jeans'), shoes: piece('worn_flats') }
+      : { top: piece('worn_tshirt'), bottom: piece('worn_jeans'), shoes: piece('worn_sneakers') };
+  }
+  G.engine.initialOutfit = initialOutfit;
+
+  // 单件服装的「有效属性」：耐久跌破半值即撕破，warmth/armor/decency 减半向下取整。
+  function clothingEff(entry) {
+    var out = { warmth: 0, armor: 0, decency: 0 };
+    if (!entry) return out;
+    var def = itemDef(entry.id);
+    if (!def) return out;
+    var torn = entry.dur != null && entry.dur < (def.durMax || 1) * 0.5;
+    var f = torn ? 0.5 : 1;
+    out.warmth = Math.floor((def.warmth || 0) * f);
+    out.armor = Math.floor((def.armor || 0) * f);
+    out.decency = Math.floor((def.decency || 0) * f);
+    out.torn = torn;
+    return out;
+  }
+  G.engine.clothingEff = clothingEff;
+
+  // 全身三槽属性合计（M15 读 warmth；combat 读 armor；文本读 decency）
+  function outfitSum(attr) {
+    var o = S().player.outfit; if (!o) return 0;
+    var total = 0;
+    for (var i = 0; i < CLOTH_SLOTS.length; i++) total += clothingEff(o[CLOTH_SLOTS[i]])[attr];
+    return total;
+  }
+  function outfitWarmth() { return outfitSum('warmth'); }
+  function outfitArmor() { return outfitSum('armor'); }
+  function outfitDecency() { return outfitSum('decency'); }
+  // 是否「基本着装」：上装与下装两槽都有衣物（成人场景宽衣描写等按此分支）
+  function isDressed() {
+    var o = S().player.outfit;
+    return !!(o && o.top && o.bottom);
+  }
+  G.engine.outfitWarmth = outfitWarmth;
+  G.engine.outfitArmor = outfitArmor;
+  G.engine.outfitDecency = outfitDecency;
+  G.engine.isDressed = isDressed;
+
+  // 战斗被击时的损衣：随机一件在穿服装耐久 -amount，跨过撕破/报废阈值时返回提示文本。
+  // 报废（dur<=0）则从 outfit 移除该槽。无在穿服装返回 null。
+  function damageClothing(amount) {
+    var o = S().player.outfit; if (!o) return null;
+    amount = amount || 1;
+    var worn = CLOTH_SLOTS.filter(function (s) { return o[s]; });
+    if (!worn.length) return null;
+    var slot = worn[Math.floor(Math.random() * worn.length)];
+    var c = o[slot], def = itemDef(c.id) || {};
+    var wasTorn = c.dur < (def.durMax || 1) * 0.5;
+    c.dur -= amount;
+    if (c.dur <= 0) {
+      o[slot] = null;
+      return '[blood]' + (def.name || '衣物') + '[/blood]被彻底扯烂，再也没法穿了。';
+    }
+    if (!wasTorn && c.dur < (def.durMax || 1) * 0.5) {
+      return (def.name || '衣物') + '被撕开一道大口子，护不住身了。';
+    }
+    return null;
+  }
+  G.engine.damageClothing = damageClothing;
+
   // ---- 条件 DSL ------------------------------------------------------------
   // 对象内多条件为 AND；anyOf 数组内为 OR。
   function cmp(actual, spec) {
@@ -629,6 +718,15 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if ('weekday' in cond && (p.day % 7) !== cond.weekday) return false;
     if ('dayMin' in cond && p.day < cond.dayMin) return false;
     if ('dayMax' in cond && p.day > cond.dayMax) return false;   // 扩展字段
+    if ('season' in cond) {                                      // M15：季节门（winter=初冬+深冬）
+      var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+      var want = cond.season;
+      var ok = want === 'winter' ? tier >= 1
+             : want === 'deepwinter' ? tier === 2
+             : want === 'earlywinter' ? tier === 1
+             : tier === 0;                                       // 'autumn'
+      if (!ok) return false;
+    }
 
     if ('stat' in cond) {
       for (var st in cond.stat) if (!cmp(p.stats[st], cond.stat[st])) return false;
@@ -660,6 +758,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if ('met' in cond) {                                          // 扩展字段：是否已相遇
       var mn = s.npcs[cond.met]; if (!mn || !mn.met) return false;
     }
+    if ('decency' in cond && !cmp(outfitDecency(), cond.decency)) return false;  // M14：着装体面合计
 
     // chance 放最后：只有其余条件全过才掷骰，避免浪费判定
     if ('chance' in cond && Math.random() >= cond.chance) return false;
@@ -771,9 +870,30 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     T_DRUNK:  60,   // 酒精 > 此值进入醉酒变体
     T_ADDICT: 50,   // 成瘾 > 此值每日发作
     T_INFECT: 80,   // 感染 > 此值进入濒死线
-    lowEnergyTimeMult: 1.5
+    lowEnergyTimeMult: 1.5,
+
+    // ---- M15 入冬季节压力 ----------------------------------------------------
+    // 季节按游戏日分三档（不做连续温度模拟）：秋(默认) → 初冬 → 深冬。
+    // 开局第 90 天=10月12日；day140≈12月1日入初冬，day170≈12月31日入深冬。
+    seasonDayEarly: 140,   // 初冬起始日
+    seasonDayDeep:  170,   // 深冬起始日
+    // 室外每 10 分钟寒冷累积基准，按季节档 [秋,初冬,深冬]；秋季 0=无寒冷压力。
+    coldOutPer10:   [0, 1.1, 1.9],
+    warmthRelief:   0.10,  // 每点全身有效保暖抵消的寒冷累积（outfitWarmth 读值）
+    coldIndoorPer10: 2.0,  // 室内/避风每 10 分钟寒冷消退
+    coldSnapSurge:  0.8,   // 寒潮期间（world.coldSnap）室外寒冷额外加成
+    boilWarmRelief: 12,    // 煮水行动兼取暖：一次的寒冷消退
+    fireWarmRelief: 40,    // 生火取暖（消耗柴火）一次的寒冷消退
+    winterWarmMarkup: 1.5, // 冬季保暖衣物商店涨价倍率（warmth>=3 的服装）
+    // 寒冷阈值（照感染/毒瘾的既有阈值模式）
+    T_COLD_CAP: 50,        // cold > 此值精力上限随寒冷值等量下降
+    T_COLD_HP:  80,        // cold > 此值每 10 分钟掉血（失温）
+    coldHpPer10: 0.5
   };
   G.TUNE = TUNE;
+
+  // 室内避风据点（不累积寒冷、并快速消退）；其余地点视为室外。
+  var INDOOR = { home: true, bar: true, church: true };
 
   function S() { return G.state; }
 
@@ -822,6 +942,23 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.engine.timeOfDay = timeOfDay;
   G.engine.isNight = function (state) { return timeOfDay(state) === '夜晚'; };
 
+  // ---- 季节（M15） --------------------------------------------------------
+  // 档位：0 秋 / 1 初冬 / 2 深冬，按游戏日阈值切换（world.season 缓存于日结算，
+  // 但所有消费方一律走这里按当前日计算，兼容缺 world.season 的老档）。
+  var SEASON_NAMES = ['autumn', 'earlywinter', 'deepwinter'];
+  function seasonTier(day) {
+    if (day >= TUNE.seasonDayDeep) return 2;
+    if (day >= TUNE.seasonDayEarly) return 1;
+    return 0;
+  }
+  function seasonTierNow(state) { return seasonTier((state || S()).player.day); }
+  function seasonNow(state) { return SEASON_NAMES[seasonTierNow(state)]; }
+  function isWinter(state) { return seasonTierNow(state) >= 1; }
+  G.engine.seasonTier = seasonTier;
+  G.engine.seasonTierNow = seasonTierNow;
+  G.engine.seasonNow = seasonNow;
+  G.engine.isWinter = isWinter;
+
   // ---- 阈值状态查询 -------------------------------------------------------
   function timeCostMod() {
     return S().player.stats.energy < TUNE.T_ENERGY ? TUNE.lowEnergyTimeMult : 1;
@@ -834,9 +971,32 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   G.engine.isHallucinating = isHallucinating;
   G.engine.isCritical = isCritical;
 
+  // ---- 寒冷累积/消退（M15；每 10 分钟步进调用一次） ----------------------
+  // 室内：寒冷快速消退；室外：按季节档基准 - 全身保暖累积寒冷，寒潮加成，
+  // 保暖充足（gain<=0）时缓慢回落。秋季无寒冷压力，仅让残留寒冷慢慢散去。
+  function coldStep(p) {
+    var cold = p.stats.cold || 0;
+    if (INDOOR[p.location]) {
+      if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10);
+      return;
+    }
+    var base = TUNE.coldOutPer10[seasonTier(p.day)] || 0;
+    if (base <= 0) {                                   // 非冬季室外：无压力，残留缓退
+      if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10 * 0.5);
+      return;
+    }
+    var w = S().world;
+    if (w && w.flags && w.flags.coldSnap) base += TUNE.coldSnapSurge;
+    var warmth = G.engine.outfitWarmth ? G.engine.outfitWarmth() : 0;
+    var gain = base - warmth * TUNE.warmthRelief;
+    if (gain > 0) G.engine.statAdd('cold', gain);
+    else if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10 * 0.5);
+  }
+
   // ---- 跨日结算：毒瘾/感染日结算 + 每日事件调度 --------------------------
   function dayRollover() {
     var st = S().player.stats;
+    if (S().world) S().world.season = SEASON_NAMES[seasonTier(S().player.day)];
     if (st.infection > 0) G.engine.statAdd('infection', TUNE.infectionDaily);
     if (st.addiction > TUNE.T_ADDICT) G.engine.statAdd('addiction', TUNE.addictionDaily);
     // 地点物资缓慢补给：搜刮计数每日回落（decay = max(.25, 1-count*.12)），
@@ -875,10 +1035,20 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       G.engine.statAdd('thirst', -TUNE.thirstPer10);
       if (!opts.sleeping) G.engine.statAdd('energy', -TUNE.energyPer10);
 
+      // M15 寒冷累积/消退（睡眠也照常，室内会消退，露宿则继续挨冻）
+      coldStep(p);
+
       // 饥/渴过低掉血
       if (p.stats.hunger < TUNE.T_STARVE || p.stats.thirst < TUNE.T_STARVE) {
         G.engine.statAdd('hp', -TUNE.starveHpPer10);
       }
+
+      // M15 寒冷阈值：>50 精力上限随寒冷等量压低；>80 失温掉血
+      if (p.stats.cold > TUNE.T_COLD_CAP) {
+        var cap = 100 - (p.stats.cold - TUNE.T_COLD_CAP);   // 50→100 … 100→50
+        if (p.stats.energy > cap) G.engine.statSet('energy', cap);
+      }
+      if (p.stats.cold > TUNE.T_COLD_HP) G.engine.statAdd('hp', -TUNE.coldHpPer10);
 
       // 死亡检测（hp=0）
       if (p.stats.hp <= 0) {
@@ -1173,7 +1343,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     moddingWearEvery: 2,     // skill:modding 每 N 次攻击才损耗 1 点耐久
     // M10 连击奖励（可选爽感）
     comboBonus: 1,           // 每段连击追加伤害
-    comboCap: 3              // 连击追加伤害上限
+    comboCap: 3,             // 连击追加伤害上限
+    // M14 服装：护甲减伤 + 损衣
+    armorDenom: 4,           // 每次受击减伤 = floor(全身 armor 合计 / armorDenom)；满配约 -3，远低于防御的 -60%
+    clothWearChance: 0.15    // 每次被击中，此概率磨损一件在穿服装（跌破半耐久撕破/归零报废）
   };
   G.COMBAT_TUNE = C;
 
@@ -1196,11 +1369,14 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   function makeEnemy(id) {
     var def = G.data.enemies[id];
     if (!def) { console.warn('[combat] 未知敌人:', id); def = { name: id, hp: 10, dmg: [1, 3], speed: 1, infect: 0 }; }
+    // M15：冬季丧尸迟缓（speed -1，下限 1；人类不受影响）——「敌弱我更弱」，非纯堆难度。
+    var speed = def.speed || 1;
+    if (!def.human && G.engine.isWinter && G.engine.isWinter()) speed = Math.max(1, speed - 1);
     return {
       id: id, name: def.name || id,
       hp: def.hp, maxHp: def.hp,
       dmg: def.dmg || [1, 3],
-      speed: def.speed || 1,
+      speed: speed,
       infect: def.infect || 0,
       loot: def.loot || null,
       descPool: def.descPool || [],
@@ -1380,9 +1556,18 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
+      // M14 护甲：全身 armor 合计换算成固定减伤（下限 1，不抵消防御的价值）
+      var armor = G.engine.outfitArmor ? G.engine.outfitArmor() : 0;
+      var soak = Math.floor(armor / C.armorDenom);
+      if (soak > 0 && dmg > 0) dmg = Math.max(1, dmg - soak);
       G.engine.statAdd('hp', -dmg);
       var desc = e.descPool.length ? pick(e.descPool) : foeName(e) + '咬了上来';
-      log.push(desc + '，你受到 ' + dmg + ' 点伤害。');
+      log.push(desc + '，你受到 ' + dmg + ' 点伤害' + (soak > 0 ? '（护甲挡下 ' + soak + '）' : '') + '。');
+      // M14 损衣：受击有概率磨损一件在穿服装
+      if (dmg > 0 && G.engine.damageClothing && Math.random() < C.clothWearChance) {
+        var wearMsg = G.engine.damageClothing(1);
+        if (wearMsg) log.push(wearMsg);
+      }
       // 感染判定
       if (e.infect && Math.random() < e.infect) {
         var inf = rand(C.infectMin, C.infectMax);
@@ -1540,7 +1725,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   window.G = window.G || {};
   G.engine = G.engine || {};
 
-  G.SAVE_VERSION = 1;
+  G.SAVE_VERSION = 3;   // M14：player.outfit（服装三槽）；M15：player.stats.cold（寒冷值）
   var PREFIX = 'lgys_save_';
   var SLOTS = [1, 2, 3, 'auto'];
 
@@ -1575,12 +1760,32 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (!data.meta) data.meta = { version: 0 };
     var v = data.meta.version || 0;
     while (v < G.SAVE_VERSION) {
-      // switch (v) { case 1: /* v1→v2 迁移 */ break; }
+      switch (v) {
+        case 1: migrateV1toV2(data); break;   // 无 outfit → 发默认初始装
+        case 2: migrateV2toV3(data); break;   // 无 cold → 补 0（老档进冬季正常生效）
+      }
       v++;
     }
     data.meta.version = G.SAVE_VERSION;
     normalize(data);
     return data;
+  }
+  // v1→v2：老档没有服装系统，按性别补一套垫底初始装（等同新开局发放）。
+  function migrateV1toV2(d) {
+    var p = d.player; if (!p) return;
+    if (!p.outfit) p.outfit = defaultOutfit(p.gender);
+  }
+  // v2→v3：老档无寒冷字段，补 0（进入冬季后由 time.js 正常累积）。
+  function migrateV2toV3(d) {
+    var p = d.player; if (!p || !p.stats) return;
+    if (p.stats.cold == null) p.stats.cold = 0;
+  }
+  function defaultOutfit(gender) {
+    if (G.engine.initialOutfit) return G.engine.initialOutfit(gender);
+    // 引擎未加载时的兜底（durMax 由 items.js 决定，这里给保守值 20）
+    return gender === 'f'
+      ? { top: { id: 'worn_blouse', dur: 20 }, bottom: { id: 'worn_jeans', dur: 25 }, shoes: { id: 'worn_flats', dur: 18 } }
+      : { top: { id: 'worn_tshirt', dur: 20 }, bottom: { id: 'worn_jeans', dur: 25 }, shoes: { id: 'worn_sneakers', dur: 20 } };
   }
   // 补全可能缺失的容器字段（兼容旧档/手工档）
   function normalize(d) {
@@ -1594,6 +1799,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     d.calendar.milestones = d.calendar.milestones || [];
     d.scavenge = d.scavenge || {};
     d.npcs = d.npcs || {};
+    if (d.player && !d.player.outfit) d.player.outfit = defaultOutfit(d.player.gender);
+    if (d.player && d.player.stats && d.player.stats.cold == null) d.player.stats.cold = 0;
     return d;
   }
 
@@ -1875,6 +2082,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       wrap.appendChild(lab); wrap.appendChild(track);
       statusEl.appendChild(wrap);
     });
+    // M15：入冬后（或有寒冷残留时）追加「寒冷」条，非冬季且为 0 时不显示以免平时噪声。
+    var cold = G.engine.statGet('cold') || 0;
+    if (((G.engine.isWinter && G.engine.isWinter()) || cold > 0)) {
+      var high = cold > G.TUNE.T_COLD_CAP;
+      var cwrap = h('div', { class: 'statusbar-item' });
+      var clab = h('div', { class: 'statusbar-label' });
+      clab.appendChild(h('span', { text: '寒冷' }));
+      clab.appendChild(h('span', { text: Math.round(cold) }));
+      var ctrack = h('div', { class: 'statusbar-track' });
+      ctrack.appendChild(h('div', { class: 'statusbar-fill cold' + (high ? ' low' : ''), style: { width: G.engine.clamp(cold, 0, 100) + '%' } }));
+      cwrap.appendChild(clab); cwrap.appendChild(ctrack);
+      statusEl.appendChild(cwrap);
+    }
   }
 
   function refresh() {
@@ -1952,7 +2172,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 
   // M3/M11 数据行动：type:'scavenge'→G.engine.scavenge，'water'/'boil'（M11 水源系统）→
   // G.engine.gatherWater/boilWater，均处理掉落/耗时/事件结算，形状一致（返回 {ok,msg}）。
-  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater' };
+  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire' };
   function runDataAction(locId, action) {
     var fnName = DATA_ACTION_FN[action.type];
     if (!fnName || !G.engine[fnName]) { console.warn('[ui] 未知地点行动类型:', action.type); return; }
@@ -2180,7 +2400,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       build: function (body, close) {
         var inv = (S().player.inventory || []).filter(function (e) {
           var def = G.engine.itemDef(e.id);
-          return def && def.type !== 'weapon';
+          return def && def.fx;   // 只列能产生效果的消耗品（排除武器/服装/材料/关键等无 fx 项，防误耗）
         });
         if (!inv.length) { body.appendChild(h('div', { class: 'inv-empty', text: '没有可用道具' })); return; }
         var list = h('div', { class: 'inv-list' });
@@ -2413,15 +2633,16 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   // 背包面板
   // =========================================================================
   var INV_CATS = [
-    { key: 'all', label: '全部' }, { key: 'weapon', label: '武器' }, { key: 'med', label: '药品' },
-    { key: 'food', label: '食物' }, { key: 'drink', label: '饮水' }, { key: 'material', label: '材料' },
-    { key: 'key', label: '关键' }, { key: 'misc', label: '杂物' }
+    { key: 'all', label: '全部' }, { key: 'weapon', label: '武器' }, { key: 'clothing', label: '服装' },
+    { key: 'med', label: '药品' }, { key: 'food', label: '食物' }, { key: 'drink', label: '饮水' },
+    { key: 'material', label: '材料' }, { key: 'key', label: '关键' }, { key: 'misc', label: '杂物' }
   ];
 
   // 装备/卸下/使用由 M3 的 js/data/items.js 提供（G.engine.equipWeapon/unequipWeapon/useItem）；
   // 丢弃道具 M1/M3 均未提供对应函数，直接调最底层的 removeItem。
   function equipWeapon(id) { G.engine.equipWeapon(id); G.ui.refresh(); }
   function unequipWeapon() { G.engine.unequipWeapon(); G.ui.refresh(); }
+  function equipClothing(id) { G.engine.equipClothing(id); G.ui.refresh(); }
   function useItem(id) {
     var res = G.engine.useItem(id);
     if (res && res.msg) G.ui.toast(G.ui.tags.strip(res.msg));
@@ -2442,6 +2663,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         if (def.price != null) meta.push('参考价：' + def.price);
         if (entry.durability != null) meta.push('耐久：' + entry.durability + (def.durMax ? ('/' + def.durMax) : ''));
         wrap.appendChild(h('div', { class: 'item-detail-meta', text: meta.join(' · ') }));
+        if (def.type === 'clothing') {
+          var cslot = { top: '上装', bottom: '下装', shoes: '鞋' }[def.slot] || def.slot;
+          wrap.appendChild(h('div', { class: 'item-detail-meta', text: '部位：' + cslot + ' · 保暖 ' + (def.warmth || 0) + ' · 护甲 ' + (def.armor || 0) + ' · 体面 ' + (def.decency || 0) }));
+        }
 
         var actions = h('div', { class: 'item-actions' });
         if (def.type === 'weapon') {
@@ -2450,6 +2675,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
           } else {
             actions.appendChild(h('button', { class: 'btn primary', text: '装备', onclick: function () { equipWeapon(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
           }
+        } else if (def.type === 'clothing') {
+          actions.appendChild(h('button', { class: 'btn primary', text: '穿上', onclick: function () { equipClothing(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
         } else if (def.fx) {
           actions.appendChild(h('button', { class: 'btn primary', text: '使用', onclick: function () { useItem(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
         }
@@ -2501,7 +2728,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
           shown++;
           var row = h('div', { class: 'inv-item', onclick: function () { openItemDetail(entry); } });
           row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
-          row.appendChild(h('span', { class: 'count', text: type === 'weapon' ? '耐久' + entry.durability : '×' + entry.count }));
+          row.appendChild(h('span', { class: 'count', text: (type === 'weapon' || type === 'clothing') ? '耐久' + entry.durability : '×' + entry.count }));
           list.appendChild(row);
         });
         if (!shown) list.appendChild(h('div', { class: 'inv-empty', text: '空空如也' }));
@@ -2521,12 +2748,82 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     { key: 'sanity', label: '理智', abnormal: function (v) { return v < G.TUNE.T_SANITY; }, note: function (v) { return v < G.TUNE.T_SANITY ? '理智濒临崩溃，可能出现幻觉' : ''; } },
     { key: 'alcohol', label: '酒精', abnormal: function (v) { return v > G.TUNE.T_DRUNK; }, note: function (v) { return v > G.TUNE.T_DRUNK ? '酩酊大醉，判定受罚' : ''; } },
     { key: 'addiction', label: '成瘾', abnormal: function (v) { return v > G.TUNE.T_ADDICT; }, note: function (v) { return v > G.TUNE.T_ADDICT ? '瘾发难耐，每日发作' : ''; } },
-    { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } }
+    { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } },
+    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } }
   ];
+  // ---- 服装区块（三槽显示 + 换装/卸下/修补） ------------------------------
+  var CLOTH_SLOT_META = [
+    { key: 'top', label: '上装' }, { key: 'bottom', label: '下装' }, { key: 'shoes', label: '鞋' }
+  ];
+  function pickClothingFor(slot, close) {
+    G.ui.openOverlay({
+      title: '换' + ({ top: '上装', bottom: '下装', shoes: '鞋' }[slot] || '装'), center: true,
+      build: function (body2, close2) {
+        var opts = (S().player.inventory || []).filter(function (e) {
+          var d = G.engine.itemDef(e.id); return d && d.type === 'clothing' && d.slot === slot;
+        });
+        if (!opts.length) { body2.appendChild(h('div', { class: 'inv-empty', text: '背包里没有这个部位的替换衣物' })); return; }
+        var list = h('div', { class: 'inv-list' });
+        opts.forEach(function (entry) {
+          var d = G.engine.itemDef(entry.id) || {};
+          var row = h('div', { class: 'inv-item', onclick: function () {
+            G.engine.equipClothing(entry.id); G.ui.refresh(); close2(); if (activeOverlay) activeOverlay.refresh();
+          } });
+          row.appendChild(h('span', { class: 'name', text: d.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '耐久' + entry.durability }));
+          list.appendChild(row);
+        });
+        body2.appendChild(list);
+      }
+    });
+  }
+  function renderOutfit(body) {
+    var o = S().player.outfit || {};
+    body.appendChild(h('div', { class: 'section-title', text: '着装' }));
+    var sum = h('div', { class: 'outfit-summary', text: '保暖 ' + G.engine.outfitWarmth() + ' · 护甲 ' + G.engine.outfitArmor() + ' · 体面 ' + G.engine.outfitDecency() });
+    body.appendChild(sum);
+    var wrap = h('div', { class: 'outfit-slots' });
+    CLOTH_SLOT_META.forEach(function (sm) {
+      var c = o[sm.key];
+      var row = h('div', { class: 'outfit-row' });
+      var left = h('div', { class: 'outfit-info' });
+      left.appendChild(h('span', { class: 'outfit-slot', text: sm.label }));
+      if (c) {
+        var def = G.engine.itemDef(c.id) || {};
+        var eff = G.engine.clothingEff(c);
+        left.appendChild(h('span', { class: 'outfit-name' + (eff.torn ? ' torn' : ''), text: (def.name || c.id) + (eff.torn ? '（破损）' : '') }));
+        left.appendChild(h('span', { class: 'outfit-dur', text: '耐久 ' + c.dur + '/' + (def.durMax || '?') }));
+      } else {
+        left.appendChild(h('span', { class: 'outfit-name empty', text: '（空着）' }));
+      }
+      row.appendChild(left);
+      var acts = h('div', { class: 'outfit-acts' });
+      acts.appendChild(h('button', { class: 'btn', text: c ? '更换' : '穿上', onclick: function () { pickClothingFor(sm.key); } }));
+      if (c) {
+        var def2 = G.engine.itemDef(c.id) || {};
+        if (c.dur < (def2.durMax || 1) && G.engine.hasItem('sewingkit')) {
+          acts.appendChild(h('button', { class: 'btn', text: '修补', onclick: function () {
+            var res = G.engine.repairClothing(sm.key);
+            if (res && res.msg) G.ui.toast(G.ui.tags.strip(res.msg));
+            if (activeOverlay) activeOverlay.refresh();
+          } }));
+        }
+        acts.appendChild(h('button', { class: 'btn', text: '脱下', onclick: function () {
+          G.engine.unequipClothing(sm.key); G.ui.refresh(); if (activeOverlay) activeOverlay.refresh();
+        } }));
+      }
+      row.appendChild(acts);
+      wrap.appendChild(row);
+    });
+    body.appendChild(wrap);
+  }
+
   function openBody() {
     openTop({
       title: '身体状态',
       build: function (body) {
+        renderOutfit(body);
+        body.appendChild(h('div', { class: 'section-title', text: '状态' }));
         var grid = h('div', { class: 'body-grid' });
         BODY_STATS.forEach(function (st) {
           var v = G.engine.statGet(st.key);
@@ -2766,9 +3063,11 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
         var buyList = h('div', { class: 'shop-list' });
         buyIds.forEach(function (id) {
           var idef = G.engine.itemDef(id); if (!idef) return;
+          var price = G.engine.itemPriceNow ? G.engine.itemPriceNow(id) : idef.price;  // M15：冬季保暖装涨价
+          var hiked = price != null && idef.price != null && price > idef.price;
           var row = h('div', { class: 'shop-item' });
-          row.appendChild(h('span', { text: idef.name || id }));
-          row.appendChild(h('span', { class: 'price', text: (idef.price || 0) + ' 弹' }));
+          row.appendChild(h('span', { text: (idef.name || id) + (hiked ? ' ❄' : '') }));
+          row.appendChild(h('span', { class: 'price', text: (price || 0) + ' 弹' }));
           row.appendChild(h('button', {
             class: 'btn', text: '购买', onclick: function () {
               var res = G.engine.shopBuy(shopId, id, 1);
@@ -3135,6 +3434,30 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     lighter: { name: '打火机', type: 'material', desc: '一只打火机，打着火的概率对半开。', price: 6, weight: 1 },
     glassbottle: { name: '玻璃瓶', type: 'material', desc: '一只空玻璃瓶，能装水也能砸碎当武器凑数。', price: 1, weight: 1 },
     toolkit: { name: '工具箱', type: 'material', desc: '一只小工具箱，扳手螺丝刀配得七零八落。', price: 20, weight: 3 },
+    sewingkit: { name: '针线包', type: 'material', desc: '一只针线包，配着几卷线和补丁布，能把撕破的衣物缝补如初。', price: 8, weight: 1 }, // M14：修补服装耐久
+    firewood: { name: '柴火', type: 'material', desc: '一捆劈好的干柴，够生一小堆火。入冬后在外头烤火驱寒，是长时间外勤的命根子。', price: 3, weight: 3 }, // M15：室外「生火取暖」消耗，大幅消退寒冷
+
+    // ---- clothing ×18（三槽：上装 top / 下装 bottom / 鞋 shoes） ------------
+    // 字段：slot / warmth(保暖,M15) / armor(减伤) / decency(体面) / durMax(耐久)。
+    // 耐久战斗被击落损，跌破半耐久则「撕破」属性减半，归零则报废（见 state.clothingEff）。
+    // worn_ 系列为开局垫底基础装（见 state.newGame 按性别发放）。
+    worn_tshirt:   { name: '旧T恤',   type: 'clothing', slot: 'top',    warmth: 1, armor: 0, decency: 2, durMax: 20, price: 4,  weight: 1, desc: '一件洗得发白的旧T恤，领口松垮，勉强蔽体。' },
+    worn_blouse:   { name: '旧衬衫',   type: 'clothing', slot: 'top',    warmth: 1, armor: 0, decency: 3, durMax: 20, price: 4,  weight: 1, desc: '一件皱巴巴的女式衬衫，扣子掉了一颗，还算齐整。' },
+    hoodie:        { name: '连帽卫衣', type: 'clothing', slot: 'top',    warmth: 3, armor: 1, decency: 3, durMax: 30, price: 12, weight: 2, desc: '一件厚实的连帽卫衣，帽子还能挡挡风雨。' },
+    leather_jacket:{ name: '皮夹克',   type: 'clothing', slot: 'top',    warmth: 3, armor: 4, decency: 4, durMax: 40, price: 40, weight: 3, desc: '一件磨旧的皮夹克，皮子够厚，扛得住抓咬。' },
+    down_jacket:   { name: '羽绒服',   type: 'clothing', slot: 'top',    warmth: 6, armor: 2, decency: 4, durMax: 35, price: 45, weight: 3, desc: '一件蓬松的羽绒服，穿上像抱着一团暖气。' },
+    tactical_vest: { name: '战术背心', type: 'clothing', slot: 'top',    warmth: 1, armor: 6, decency: 3, durMax: 50, price: 60, weight: 4, desc: '一件带插板的战术背心，护住前胸后背要害。' },
+    raincoat:      { name: '雨衣',     type: 'clothing', slot: 'top',    warmth: 2, armor: 1, decency: 3, durMax: 25, price: 10, weight: 1, desc: '一件半透明的连体雨衣，下雨天不至于淋透。' },
+    worn_jeans:    { name: '旧牛仔裤', type: 'clothing', slot: 'bottom', warmth: 2, armor: 1, decency: 3, durMax: 25, price: 5,  weight: 1, desc: '一条膝盖磨薄的旧牛仔裤，还算耐穿。' },
+    cargo_pants:   { name: '工装裤',   type: 'clothing', slot: 'bottom', warmth: 3, armor: 2, decency: 3, durMax: 35, price: 15, weight: 2, desc: '一条多口袋工装裤，布料厚，兜里能塞不少东西。' },
+    thermal_pants: { name: '保暖裤',   type: 'clothing', slot: 'bottom', warmth: 5, armor: 1, decency: 3, durMax: 30, price: 20, weight: 1, desc: '一条抓绒保暖裤，贴身穿最挡寒。' },
+    tactical_pants:{ name: '战术裤',   type: 'clothing', slot: 'bottom', warmth: 2, armor: 4, decency: 3, durMax: 45, price: 35, weight: 2, desc: '一条加了护膝的战术长裤，耐磨抗划。' },
+    short_skirt:   { name: '短裙',     type: 'clothing', slot: 'bottom', warmth: 0, armor: 0, decency: 1, durMax: 15, price: 6,  weight: 1, desc: '一条短裙，好看，但在末日街头实在不合时宜。' },
+    worn_sneakers: { name: '旧运动鞋', type: 'clothing', slot: 'shoes',  warmth: 1, armor: 0, decency: 2, durMax: 20, price: 4,  weight: 1, desc: '一双开胶的旧运动鞋，鞋底还没磨穿。' },
+    worn_flats:    { name: '旧平底鞋', type: 'clothing', slot: 'shoes',  warmth: 1, armor: 0, decency: 2, durMax: 18, price: 4,  weight: 1, desc: '一双旧平底鞋，走久了硌脚，聊胜于赤足。' },
+    work_boots:    { name: '工装靴',   type: 'clothing', slot: 'shoes',  warmth: 2, armor: 2, decency: 3, durMax: 40, price: 18, weight: 2, desc: '一双钢头工装靴，踩碎玻璃也不怕。' },
+    combat_boots:  { name: '战靴',     type: 'clothing', slot: 'shoes',  warmth: 3, armor: 3, decency: 3, durMax: 50, price: 30, weight: 2, desc: '一双军用战靴，高帮护踝，跑起来也稳。' },
+    rubber_boots:  { name: '雨靴',     type: 'clothing', slot: 'shoes',  warmth: 2, armor: 1, decency: 2, durMax: 30, price: 8,  weight: 2, desc: '一双及膝雨靴，蹚水过泥都不进水。' },
 
     // ---- key/misc ×12（剧情预留，供 M5–M8 使用；无 fx，不入商店货架） -----
     qin_dossier: { name: '旧案卷宗', type: 'key', desc: '一份泛黄的案卷，封皮上盖着警局的旧公章。', price: null, weight: 1 }, // 预留：qin 警惕阶段剧情道具
@@ -3190,6 +3513,49 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     return true;
   }
   G.engine.unequipWeapon = unequipWeapon;
+
+  // ---- 服装装备/卸下/修补（M14；outfit 结构与效果计算见 state.js） ----------
+  // 从背包取该 id 的第一件服装穿上，占用其 slot，原槽位服装（若有）放回背包。
+  function equipClothing(id) {
+    var def = G.engine.itemDef(id);
+    if (!def || def.type !== 'clothing') return false;
+    var p = G.state.player;
+    p.outfit = p.outfit || { top: null, bottom: null, shoes: null };
+    var inv = p.inventory, idx = -1;
+    for (var i = 0; i < inv.length; i++) if (inv[i].id === id) { idx = i; break; }
+    if (idx < 0) return false;
+    var entry = inv[idx];
+    var slot = def.slot;
+    var cur = p.outfit[slot];
+    inv.splice(idx, 1);
+    if (cur) inv.push({ id: cur.id, count: 1, durability: cur.dur });
+    p.outfit[slot] = { id: id, dur: entry.durability != null ? entry.durability : (def.durMax || 1) };
+    return true;
+  }
+  G.engine.equipClothing = equipClothing;
+
+  function unequipClothing(slot) {
+    var p = G.state.player;
+    if (!p.outfit || !p.outfit[slot]) return false;
+    var c = p.outfit[slot];
+    p.outfit[slot] = null;
+    p.inventory.push({ id: c.id, count: 1, durability: c.dur });
+    return true;
+  }
+  G.engine.unequipClothing = unequipClothing;
+
+  // 用一只针线包把某槽位服装耐久补满（消耗 1 针线包）。返回 {ok,msg}。
+  function repairClothing(slot) {
+    var p = G.state.player;
+    if (!p.outfit || !p.outfit[slot]) return { ok: false, msg: '这个部位没穿衣服。' };
+    if (!G.engine.hasItem('sewingkit')) return { ok: false, msg: '你没有[item]针线包[/item]。' };
+    var c = p.outfit[slot], def = G.engine.itemDef(c.id) || {};
+    if (c.dur >= (def.durMax || 1)) return { ok: false, msg: '[item]' + (def.name || c.id) + '[/item]还是完好的，用不着补。' };
+    c.dur = def.durMax || 1;
+    G.engine.removeItem('sewingkit', 1);
+    return { ok: true, msg: '你把[item]' + (def.name || c.id) + '[/item]缝补如新。' };
+  }
+  G.engine.repairClothing = repairClothing;
 
 })();
 
@@ -3346,7 +3712,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
  *   'water'    —— 走 G.engine.gatherWater（M11 新增），action.water:'river'|'rain' 区分取水/接雨水，
  *                  requiresItem:'glassbottle'（消耗 1 个换生水 1 份），rain 型另需 world.rainDay
  *   'boil'     —— 走 G.engine.boilWater（M11 新增），requiresItem:'lighter'（不消耗），
- *                  把包里 1 份生水（优先 riverwater，无则 rainwater）转成 boiledwater
+ *                  把包里 1 份生水（优先 riverwater，无则 rainwater）转成 boiledwater；
+ *                  M15：兼「取暖」，煮水时顺带消退寒冷 TUNE.boilWarmRelief
+ *   'warm'     —— 走 G.engine.makeFire（M15 新增），requiresItem:'firewood'（消耗 1），
+ *                  室外「生火取暖」大幅消退寒冷 TUNE.fireWarmRelief；cond:{stat:{cold:{gt:0}}} 仅有寒冷时显示
  *
  * 配套小逻辑（M1 未提供，数据层补齐，挂到 G.engine）：
  *   G.engine.locationNeighbors(locId)   —— 含 sewer 捷径解锁后的双向可达表 {locId:minutes}
@@ -3553,13 +3922,16 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       actions: [{ id: 'scavenge', label: '深入商场搜刮', type: 'scavenge', time: 35, energy: 10 }],
       scavengeTable: [
         { tier: 'common', weight: 60, items: [
-          { id: 'clothstrip', chance: 0.3 }, { id: 'chocolatebar', chance: 0.3 }, { id: 'cannedfish', chance: 0.25 }
+          { id: 'clothstrip', chance: 0.3 }, { id: 'chocolatebar', chance: 0.3 }, { id: 'cannedfish', chance: 0.25 },
+          { id: 'worn_tshirt', chance: 0.18 }, { id: 'short_skirt', chance: 0.12 }, { id: 'worn_flats', chance: 0.15 } // M14：服装区货架
         ] },
         { tier: 'uncommon', weight: 30, items: [
-          { id: 'machete', chance: 0.2 }, { id: 'spikebat', chance: 0.15 }, { id: 'liquor', chance: 0.2 }
+          { id: 'machete', chance: 0.2 }, { id: 'spikebat', chance: 0.15 }, { id: 'liquor', chance: 0.2 },
+          { id: 'hoodie', chance: 0.15 }, { id: 'cargo_pants', chance: 0.12 }, { id: 'rubber_boots', chance: 0.12 }
         ] },
         { tier: 'rare', weight: 10, items: [
-          { id: 'shotgun', chance: 0.06 }, { id: 'revolver', chance: 0.06 }, { id: 'militaryfirstaid', chance: 0.12 }
+          { id: 'shotgun', chance: 0.06 }, { id: 'revolver', chance: 0.06 }, { id: 'militaryfirstaid', chance: 0.12 },
+          { id: 'leather_jacket', chance: 0.08 }, { id: 'down_jacket', chance: 0.08 }
         ] }
       ],
       adjacent: { police: 35, park: 30, checkpoint: 35, metro: 35 },
@@ -3652,11 +4024,43 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     });
   });
 
+  // M15「生火取暖」：室内安全区外的地点新增该行动，消耗 1 柴火大幅消退寒冷，
+  // 仅当身上确有寒冷值（cold>0）时显示（cond 走既有 stat DSL），避免非冬季冗余。
+  Object.keys(G.data.locations).forEach(function (id) {
+    if (RAIN_EXEMPT[id]) return;
+    G.data.locations[id].actions.push({
+      id: 'make_fire', label: '生火取暖', type: 'warm',
+      time: 20, energy: 2, requiresItem: 'firewood',
+      cond: { stat: { cold: { gt: 0 } } }
+    });
+  });
+
   // ---- 配套小逻辑 -----------------------------------------------------------
+  // M15：入冬后给地点描述追加一句季节变体（从简：按季节档 + 室内外 + 昼夜取固定句，
+  // 不随机以免每次重渲染闪烁）。秋季返回空串（不改动原描述）。
+  var INDOOR_LOC = { home: true, bar: true, church: true };
+  function seasonSuffix(locId) {
+    var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+    if (tier === 0) return '';
+    var night = G.engine.isNight();
+    if (INDOOR_LOC[locId]) {
+      return tier >= 2
+        ? '　屋里那点火光挡不住深冬的寒气，呵气成霜，你把领口又裹紧了些。'
+        : '　入了冬，屋里也存不住多少暖意，指尖凉得发僵。';
+    }
+    if (tier >= 2) {
+      return night
+        ? '　深冬的夜里滴水成冰，风像刀子，在外头多留一刻都是煎熬。'
+        : '　天地一片惨白，积雪没过脚踝，呼出的白气转眼散在刺骨的风里。';
+    }
+    return night
+      ? '　初冬的夜风灌进衣领，冻得人骨头发紧。'
+      : '　初冬的寒意漫上来，路边的水洼结了层薄冰。';
+  }
   function locationDesc(locId) {
     var loc = G.data.locations[locId];
     if (!loc) return '';
-    return G.engine.isNight() ? loc.descNight : loc.descDay;
+    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId);
   }
   G.engine.locationDesc = locationDesc;
 
@@ -3779,13 +4183,28 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (action.water === 'rain' && !G.engine.getFlag('world.rainDay')) {
       return { ok: false, msg: '今天没下雨，接不到雨水。' };
     }
+    // M15 水源冬季联动：深冬江边取水要破冰（耗时翻倍）；冬季「接雨水」实为接雪化水，
+    // 产出减半（半数概率空手而归），且不消耗玻璃瓶（瓶子留着，不算白费一趟）。
+    var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+    var isRain = action.water === 'rain';
+    var time = action.time || 0;
+    var prefix = '';
+    if (!isRain && tier >= 2) { time *= 2; prefix = '江面结了冰，你先砸开一个窟窿才够着水——'; }
+    if (isRain && tier >= 1) {
+      prefix = '天上飘的是雪不是雨，你刮拢积雪慢慢化水——';
+      if (Math.random() < 0.5) {
+        G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: time });
+        if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+        return { ok: true, msg: prefix + '积雪太薄，这一趟没化出多少，瓶子还空着。' };
+      }
+    }
     G.engine.removeItem(action.requiresItem, 1);
-    var itemId = action.water === 'rain' ? 'rainwater' : 'riverwater';
+    var itemId = isRain ? 'rainwater' : 'riverwater';
     G.engine.addItem(itemId, 1);
-    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: time });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
     var def = G.engine.itemDef(itemId);
-    return { ok: true, msg: '打了一瓶[item]' + (def ? def.name : itemId) + '[/item]，生水没烧开不能直接喝。' };
+    return { ok: true, msg: prefix + '打了一瓶[item]' + (def ? def.name : itemId) + '[/item]，生水没烧开不能直接喝。' };
   }
   G.engine.gatherWater = gatherWater;
 
@@ -3802,12 +4221,30 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (!raw) return { ok: false, msg: '包里没有生水可以煮。' };
     G.engine.removeItem(raw, 1);
     G.engine.addItem('boiledwater', 1);
+    // M15：煮水行动兼「取暖」——炉火顺带消退寒冷。
+    var warmed = false;
+    if (G.TUNE && G.engine.statGet('cold') > 0) { G.engine.statAdd('cold', -G.TUNE.boilWarmRelief); warmed = true; }
     G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
     var rawDef = G.engine.itemDef(raw);
-    return { ok: true, msg: '把[item]' + (rawDef ? rawDef.name : raw) + '[/item]烧开，得到[item]净水[/item]。' };
+    return { ok: true, msg: '把[item]' + (rawDef ? rawDef.name : raw) + '[/item]烧开，得到[item]净水[/item]。' +
+      (warmed ? '就着炉火烤了烤手，暖和了些。' : '') };
   }
   G.engine.boilWater = boilWater;
+
+  // 生火取暖（M15）：室外消耗 1 柴火大幅消退寒冷（requiresItem 由 UI 置灰前置校验，这里再兜底）。
+  function makeFire(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    if (!G.engine.hasItem('firewood')) return { ok: false, msg: '没有[item]柴火[/item]，生不起火。' };
+    G.engine.removeItem('firewood', 1);
+    var relief = (G.TUNE && G.TUNE.fireWarmRelief) || 40;
+    G.engine.statAdd('cold', -relief);
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: '你拢起[item]柴火[/item]生了堆火，凑近烤了烤，寒气退了大半。' };
+  }
+  G.engine.makeFire = makeFire;
 
   // ---- 通用氛围/收获/遇敌 random 事件（每地点 2–3 条，无剧情，给 M8 事件池打底） ----
   function passage(id, text, choices) {
@@ -4077,16 +4514,21 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
       npc: 'zhao', location: 'market', sellRate: 0.5, restock: 'weekday==4',
       tiers: {
         0: ['bottledwater', 'cannedfood', 'drycracker', 'instantnoodle', 'herbaltea',
-            'bandage', 'clothstrip', 'rope', 'tape', 'rustpipe', 'kitchenknife'],
+            'bandage', 'clothstrip', 'rope', 'tape', 'rustpipe', 'kitchenknife',
+            'sewingkit', 'hoodie', 'worn_jeans', 'work_boots'],          // M14：日用服装 + 针线包
         40: ['machete', 'crowbar', 'baseballbat', 'militaryfirstaid', 'antibiotics',
-             'gasoline', 'battery', 'flashlight'],
-        70: ['pistol', 'revolver', 'shotgun', 'sledgehammer', 'fireaxe', 'spikebat']
-      }
+             'gasoline', 'battery', 'flashlight',
+             'down_jacket', 'thermal_pants', 'cargo_pants', 'raincoat'], // M14：入冬保暖装
+        70: ['pistol', 'revolver', 'shotgun', 'sledgehammer', 'fireaxe', 'spikebat',
+             'leather_jacket']
+      },
+      winterStock: ['firewood']   // M15：冬季上新（柴火；保暖衣物本就在 tier40，入冬另涨价）
     },
     fang_ammo: {
       npc: 'fang', location: 'checkpoint', sellRate: 0.4, restock: null,
       tiers: {
-        0: ['pistol', 'revolver', 'militaryfirstaid', 'scrapmetal', 'gasoline']
+        0: ['pistol', 'revolver', 'militaryfirstaid', 'scrapmetal', 'gasoline',
+            'tactical_vest', 'tactical_pants', 'combat_boots']           // M14：军用护甲装
       }
     },
     cai_barter: {
@@ -4102,6 +4544,19 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     }
   };
 
+  // M15：当前实际售价（冬季保暖衣物 warmth>=3 涨价；其余物品原价）。
+  function itemPriceNow(id) {
+    var def = G.engine.itemDef(id);
+    if (!def || def.price == null) return def ? def.price : null;
+    var price = def.price;
+    if (def.type === 'clothing' && (def.warmth || 0) >= 3 &&
+        G.engine.isWinter && G.engine.isWinter()) {
+      price = Math.ceil(price * ((G.TUNE && G.TUNE.winterWarmMarkup) || 1.5));
+    }
+    return price;
+  }
+  G.engine.itemPriceNow = itemPriceNow;
+
   // ---- 好感分层货架 ---------------------------------------------------------
   function buyableItems(shopId) {
     var shop = G.data.trade[shopId];
@@ -4111,6 +4566,10 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     Object.keys(shop.tiers).map(Number).sort(function (a, b) { return a - b; }).forEach(function (threshold) {
       if (aff >= threshold) out = out.concat(shop.tiers[threshold]);
     });
+    // M15 冬季上新：winterStock 仅在初冬/深冬追加（去重，避免与货架重复）
+    if (shop.winterStock && G.engine.isWinter && G.engine.isWinter()) {
+      shop.winterStock.forEach(function (id) { if (out.indexOf(id) < 0) out.push(id); });
+    }
     return out;
   }
   G.engine.shopBuyableItems = buyableItems;
@@ -4122,7 +4581,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     if (buyableItems(shopId).indexOf(itemId) < 0) return { ok: false, msg: '这里没有卖这个。' };
     var def = G.engine.itemDef(itemId);
     if (!def) return { ok: false, msg: '未知道具。' };
-    var cost = (def.price || 0) * qty;
+    var cost = (itemPriceNow(itemId) || 0) * qty;   // M15：冬季保暖衣物按涨价后价结算
     if (G.state.player.bullets < cost) return { ok: false, msg: '子弹不够。' };
     G.state.player.bullets -= cost;
     G.engine.addItem(itemId, qty);
@@ -8239,8 +8698,8 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
   ]);
   ev('enc_mall_2', { loc: 'mall', chance: 0.15 }, 480, 'enc_mall_2_p');
 
-  P('rare_mall_1_p', '运动用品店的仓储间塌了半边，砸变形的卷帘门后头，一整面货架没被人碰过：登山绳、手电、真空包装的肉干，全是救命的硬货。', [
-    { label: '装满背包', fx: { item: { rope: 1, flashlight: 1, driedmeat: 2 }, time: 25, stat: { energy: -5 } } }
+  P('rare_mall_1_p', '运动用品店的仓储间塌了半边，砸变形的卷帘门后头，一整面货架没被人碰过：登山绳、手电、真空包装的肉干，连挂样的皮夹克和战靴都还在——全是救命的硬货。', [
+    { label: '装满背包', fx: { item: { rope: 1, flashlight: 1, driedmeat: 2, leather_jacket: 1, combat_boots: 1 }, time: 25, stat: { energy: -5 } } } // M14：户外柜上架服装
   ]);
   ev('rare_mall_1', { loc: 'mall', chance: 0.05 }, 4320, 'rare_mall_1_p');
 
@@ -8976,6 +9435,227 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
     // 约会事件：不进常规池，只被日历 eventId 强制触发
     EV({ id: 'dol_date_' + d.id, type: 'story', when: [], passage: 'dol_date_' + d.id + '_p' });
   });
+
+})();
+
+</script>
+<!-- js/data/story/clothing.js -->
+<script>
+/* =============================================================================
+ * clothing.js — M14 服装系统的文本适配（数据层）
+ * -----------------------------------------------------------------------------
+ * 机制（服装三槽/属性/耐久/护甲/迁移）在引擎侧（state.js/combat.js/save.js）与
+ * 数据侧（items.js/trade.js/locations.js）实现；本文件只做「决定性场景」的文本分支：
+ *
+ *   decency 反应事件（5 名 NPC 各一句）——当全身着装体面合计过低（cond.decency<=2，
+ *   相当于只剩垫底基础装再被撕破、或穿了短裙这类不合时宜的搭配）时，在各 NPC 的
+ *   作息地点低频弹一句氛围台词。纯氛围、不锁剧情、不设硬门槛（任务书约束），
+ *   priority 1、chance 低、冷却长，met 门保证只对已识 NPC 触发。
+ *
+ * 成人场景的「宽衣」描写分支：引擎已提供 G.engine.isDressed()（上装+下装两槽都在），
+ * 供成人段落的 text 函数按需分叉；M6/M7 既有亲密段落维持原样（改写风险与工作量红线），
+ * 新增成人内容可直接读该接口。见 PLAN.md M14 交接备注。
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  var story = G.data.story, events = G.data.events;
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+
+  // decency 反应：{ id, npc, loc, line }。低体面时该 NPC 在其作息地点给一句反应。
+  var REACTS = [
+    { id: 'su',   npc: 'su',   loc: 'bar',
+      line: '[npc:su]苏曼[/npc]递酒的手顿了顿，目光在你身上扫了一圈："这身……啧，末日了也不是这么穿的。后面纸箱里有几件旧衣裳，自己挑挑。"' },
+    { id: 'zhao', npc: 'zhao', loc: 'market',
+      line: '[npc:zhao]赵铁[/npc]从柜台后抬眼看你，眉头拧了一下："姑娘家小伙子，衣裳穿成这样，路上招人。我这儿也卖几件遮体的，便宜。"' },
+    { id: 'chen', npc: 'chen', loc: 'church',
+      line: '[npc:chen]陈神父[/npc]默默从长凳上取来一条毛毯，披到你肩上，什么也没多说，只念了半句听不清的祷词。' },
+    { id: 'fang', npc: 'fang', loc: 'checkpoint',
+      line: '[npc:fang]方哨[/npc]端着枪的手没动，只是皱眉打量你："这么点布片挡不住抓咬，也挡不住夜里的冷。找件正经衣服穿上。"' },
+    { id: 'lin',  npc: 'lin',  loc: 'hospital',
+      line: '[npc:lin]林晚[/npc]抬头看你一眼，从柜子里翻出一件干净的旧外套搁在台面上："先披上。冻病了我这儿药也不够治你。"' }
+  ];
+
+  REACTS.forEach(function (r) {
+    var pid = 'decency_react_' + r.id + '_p';
+    P(pid, r.line, [{ label: '（点头）', fx: {} }]);
+    events.register({
+      id: 'decency_react_' + r.id, type: 'random', priority: 1, cooldown: 2880,
+      cond: { loc: r.loc, met: r.npc, decency: { lte: 2 }, chance: 0.35 },
+      passage: pid
+    });
+  });
+
+})();
+
+</script>
+<!-- js/data/story/season.js -->
+<script>
+/* =============================================================================
+ * season.js — M15 入冬季节事件（数据层）
+ * -----------------------------------------------------------------------------
+ * 机制（季节档/寒冷值/水源联动/丧尸减速/商店涨价）在引擎侧（time.js 季节与寒冷、
+ * combat.js 减速、state.js season cond）与数据侧（locations.js 破冰/接雪/生火、
+ * trade.js 涨价上新、items.js 柴火）实现；本文件只做「季节文本层」：
+ *
+ *   1. 寒潮预警链（仿 M8 尸潮夜 appointment 写法）：coldsnap_warn 预警 → 次日定点
+ *      coldsnap_start 强制开场（写 world.coldSnap，室外寒冷 +TUNE.coldSnapSurge）→
+ *      次日 coldsnap_end 收尾清旗。只在冬季（season winter）出现。
+ *   2. 雪天氛围池 snow_amb_1~7（冬季·室外，纯氛围/少量数值）。
+ *   3. 冻毙的流浪者 frozen_wanderer_1~3（冬季·室外，拾取遗物衣物的道德小分支：
+ *      取暖 vs 留全尸，各给不同数值取向）。为控体量做成「共享池」跨室外地点触发，
+ *      而非逐地点各写 2–3 条——与 M8 世界事件同样的共享池取舍（见 PLAN.md M15 备注）。
+ *
+ * 世界 flag（本模块自管）：world.coldSnapAlert（预警中）/ world.coldSnap（寒潮进行中）
+ * ========================================================================== */
+(function () {
+  'use strict';
+  window.G = window.G || {};
+  var story = G.data.story, events = G.data.events;
+
+  function P(id, text, choices) { story.register({ id: id, text: text, choices: choices }); }
+  function ev(id, cond, cooldown, passageId, priority, when) {
+    var e = { id: id, type: 'random', cond: cond, cooldown: cooldown, passage: passageId };
+    if (priority != null) e.priority = priority;
+    if (when) e.when = when;
+    events.register(e);
+  }
+  var NIGHT = [1200, 300];
+  // 室外地点（室内安全区 home/bar/church 除外），供雪天/流浪者共享池 anyOf
+  var OUTDOOR = { anyOf: [
+    { loc: 'residential' }, { loc: 'market' }, { loc: 'hospital' }, { loc: 'police' },
+    { loc: 'campus' }, { loc: 'metro' }, { loc: 'park' }, { loc: 'gas' },
+    { loc: 'mall' }, { loc: 'dock' }, { loc: 'checkpoint' }, { loc: 'sewer' }
+  ] };
+  function outdoor(extra) {
+    var c = { anyOf: OUTDOOR.anyOf };
+    for (var k in extra) c[k] = extra[k];
+    return c;
+  }
+
+  // ==========================================================================
+  // 1. 寒潮预警链
+  // ==========================================================================
+  events.register({
+    id: 'coldsnap_warn', type: 'random', when: ['tick', 'enter'], priority: 5, cooldown: 8640,
+    cond: { season: 'winter', timeRange: [1020, 1380], chance: 0.09,
+            flag: { 'world.coldSnap': false, 'world.coldSnapAlert': false } },
+    passage: 'coldsnap_warn_p1'
+  });
+
+  P('coldsnap_warn_p1',
+    function (s) {
+      if (s.npcs.zhou && s.npcs.zhou.met) {
+        return '收音机里插进一段加播，周响的声音压得很沉：“再报一次寒潮预警——今夜起北方强冷空气过境，最低温度骤降，务必备足柴火、糊严门窗，非必要不要出门。冻死人的天气，不是吓唬你们。”';
+      }
+      if (s.npcs.cai && s.npcs.cai.met) {
+        return '老蔡蹲在码头边闻了闻风，忽然扭头冲你喊：“要变天了！这风带着刀子味——今晚起寒潮，屋里囤柴，江面明后天就得封冰。”说完又缩回他那堆破棉絮里。';
+      }
+      return '街角几个人围着一台半导体收音机，脸色都不好看：预报说今夜起寒潮过境，气温断崖式往下掉。人群很快散了，各自回去抱柴、堵窗——这年头，冻比饿来得更快。';
+    },
+    [{ label: '囤柴、糊窗，准备熬这一场', fx: {
+        flag: { 'world.coldSnapAlert': true },
+        appointment: { inDays: 1, minute: 300, label: '寒潮过境（囤柴/保暖）', eventId: 'coldsnap_start' },
+        stat: { sanity: -2 } } }]);
+
+  // 开场（仅由日历 eventId 强制触发；when:[] 不入常规池）
+  events.register({ id: 'coldsnap_start', type: 'story', when: [], once: false, priority: 8, passage: 'coldsnap_start_p1' });
+
+  P('coldsnap_start_p1',
+    function (s) {
+      if (!G.engine.getFlag('world.coldSnap')) {
+        G.engine.setFlag('world.coldSnap', true);
+        G.engine.setFlag('world.coldSnapAlert', false);
+        var p = s.player;
+        // 次日 20:00 由日历强制收尾（睡眠/挂机跨点也能结算）
+        s.calendar.appointments.push({ day: p.day + 1, minute: 1200, label: '寒潮消退', eventId: 'coldsnap_end', done: false });
+      }
+      var loc = s.player.location;
+      if (loc === 'home' || loc === 'bar' || loc === 'church') {
+        return '寒潮在夜里落了地。风声陡然拔高，撞得门窗嗡嗡作响，屋里的温度肉眼可见地往下坠——你把能盖的都堆到身上，凑近那点火，听着外头天地被冻得咔咔作响。今夜，外头是要人命的。';
+      }
+      return '寒潮说来就来。风向一转，气温像被人抽掉了底，呼吸间鼻腔都在刺痛，睫毛上很快结了霜。你能听见远处水管冻裂的闷响——这种天在外头待久了，人会像根冰棍一样悄无声息地停下。';
+    },
+    [{ label: '（熬过这场寒潮）', fx: { stat: { sanity: -3 }, milestone: '寒潮夜' } }]);
+
+  // 收尾（仅由日历 eventId 强制触发）
+  events.register({ id: 'coldsnap_end', type: 'story', when: [], once: false, priority: 8, passage: 'coldsnap_end_p1' });
+
+  P('coldsnap_end_p1',
+    '风终于软了下来。太阳出来时，屋檐下挂起一排冰棱，滴水的声音久违地响起。最冷的那一截过去了——冻裂的水管、缩在墙角没能熬过去的人，都留给白天去清点。你搓了搓僵硬的手指，活了过来。',
+    [{ label: '（缓过来了）', fx: { flag: { 'world.coldSnap': false }, stat: { sanity: 3 } } }]);
+
+  // ==========================================================================
+  // 2. 雪天氛围池（冬季·室外）
+  // ==========================================================================
+  P('snow_amb_1_p', '雪不知什么时候下了起来，一片片压着灰败的街道，把弹壳、血迹和拖行的爪痕都盖成了同一种白。有那么一瞬间，这座城安静得像是从没死过。', [
+    { label: '站在雪里看了一会儿', fx: { stat: { sanity: 3 }, time: 10 } },
+    { label: '缩紧脖子赶路', fx: { stat: { cold: 3 } } }
+  ]);
+  ev('snow_amb_1', outdoor({ season: 'winter', chance: 0.15 }), 360, 'snow_amb_1_p', 1);
+
+  P('snow_amb_2_p', '雪地上一串脚印通向远方，深一脚浅一脚，走得很慢——走的人显然拖着伤，或是拖着放不下的东西。脚印尽头是什么，你没有跟过去。', [
+    { label: '（愿他走到了想去的地方）', fx: { stat: { sanity: 1 } } }
+  ]);
+  ev('snow_amb_2', outdoor({ season: 'winter', chance: 0.12 }), 480, 'snow_amb_2_p', 1);
+
+  P('snow_amb_3_p', '一只麻雀冻僵在窗台的雪堆里，羽毛还蓬着，像只是睡着了。这样的冬天，连活得最不起眼的东西也熬不住。', [
+    { label: '把它埋进雪里', fx: { stat: { sanity: 2 }, time: 10 } },
+    { label: '移开视线走开', fx: { stat: { sanity: -1 } } }
+  ]);
+  ev('snow_amb_3', outdoor({ season: 'winter', chance: 0.12 }), 480, 'snow_amb_3_p', 1);
+
+  P('snow_amb_4_p', '呵出的白气刚离开嘴唇就散了。你搓着手，忽然想起从前这种天该是围炉、烫酒、窝在被子里刷手机的日子——那些暖和的念头此刻反倒让人更冷。', [
+    { label: '甩掉这点念想', fx: { stat: { sanity: -2 } } },
+    { label: '算了，还活着就好', fx: { stat: { sanity: 2 } } }
+  ]);
+  ev('snow_amb_4', outdoor({ season: 'winter', chance: 0.1 }), 600, 'snow_amb_4_p', 1);
+
+  P('snow_amb_5_p', '积雪压塌了一处棚顶，闷响过后，整条街的死人都朝这边偏了偏头，又缓缓垂下——它们在雪里迟钝得像慢放的影子，你却半天暖不过来。冬天是敌弱，我更弱。', [
+    { label: '趁它们发懵绕开', fx: { stat: { energy: -3 }, time: 10 } }
+  ]);
+  ev('snow_amb_5', outdoor({ season: 'winter', chance: 0.1 }), 600, 'snow_amb_5_p', 1);
+
+  P('snow_amb_6_p', '深冬的夜里，天冷得连星子都显得锋利。远处某扇窗透出一点橘黄的火光，像这片死寂里唯一还跳动的东西。你盯着那点光，脚步不由得快了些。', [
+    { label: '朝着有火光的方向走', fx: { stat: { sanity: 2, cold: 2 } } }
+  ]);
+  ev('snow_amb_6', outdoor({ season: 'deepwinter', timeRange: NIGHT, chance: 0.14 }), 420, 'snow_amb_6_p', 1);
+
+  P('snow_amb_7_p', '风卷着雪粒抽在脸上，生疼。你把围在脸上的布又拉高一截，睫毛上的霜化了又结。这种风里，保暖的衣裳不是讲究，是命。', [
+    { label: '（低头顶着风走）', fx: { stat: { cold: 4, energy: -2 } } }
+  ]);
+  ev('snow_amb_7', outdoor({ season: 'deepwinter', chance: 0.12 }), 480, 'snow_amb_7_p', 1);
+
+  // ==========================================================================
+  // 3. 冻毙的流浪者（冬季·室外，拾取衣物的道德小分支）
+  // ==========================================================================
+  // 三条变体各给一件保暖衣物：取 → 保暖但理智略损；留 → 理智略增。共享池跨室外地点。
+  P('frozen_wanderer_1_p',
+    '墙根下靠坐着一个人，一动不动。你以为是睡着的，走近才看清——早冻硬了，怀里还护着半块没啃完的饼。他身上那件厚[item]连帽卫衣[/item]倒是完好，对活人来说，是能续命的东西。', [
+    { label: '脱下他的卫衣带走', fx: { item: { hoodie: 1 }, stat: { sanity: -4 }, time: 15 } },
+    { label: '给他拢一把雪盖上，走了', fx: { stat: { sanity: 3 }, time: 10 } }
+  ]);
+  ev('frozen_wanderer_1', outdoor({ season: 'winter', chance: 0.1 }), 2880, 'frozen_wanderer_1_p', 2);
+
+  P('frozen_wanderer_2_p',
+    '雪堆里露出一截裤脚。你扒开积雪，是个蜷成一团的流浪汉，冻得像块石头，脚上一双厚实的[item]工装靴[/item]，鞋底几乎没磨损——他大概刚流落到这条街，就没能再走出去。', [
+    { label: '换走他的靴子', fx: { item: { work_boots: 1 }, stat: { sanity: -3 }, time: 15 } },
+    { label: '留他一具全尸', fx: { stat: { sanity: 2 } } }
+  ]);
+  ev('frozen_wanderer_2', outdoor({ season: 'winter', chance: 0.1 }), 2880, 'frozen_wanderer_2_p', 2);
+
+  P('frozen_wanderer_3_p',
+    function (s) {
+      var base = '一具冻僵的尸体半埋在雪里，身上裹着件蓬松的[item]羽绒服[/item]，是这种天气里最要命也最救命的东西。它已经帮不了主人了。';
+      if (s.player.stats.cold > (G.TUNE ? G.TUNE.T_COLD_CAP : 50)) {
+        base += '你自己也冷得开始发抖，牙关咯咯打颤——这件衣服，你比他更需要。';
+      }
+      return base;
+    }, [
+    { label: '剥下羽绒服穿上／收好', fx: { item: { down_jacket: 1 }, stat: { sanity: -5 }, time: 20 } },
+    { label: '狠不下心，替他合上眼', fx: { stat: { sanity: 4 }, time: 10 } }
+  ]);
+  ev('frozen_wanderer_3', outdoor({ season: 'deepwinter', chance: 0.08 }), 4320, 'frozen_wanderer_3_p', 2);
 
 })();
 

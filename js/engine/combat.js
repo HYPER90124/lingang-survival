@@ -41,7 +41,10 @@
     moddingWearEvery: 2,     // skill:modding 每 N 次攻击才损耗 1 点耐久
     // M10 连击奖励（可选爽感）
     comboBonus: 1,           // 每段连击追加伤害
-    comboCap: 3              // 连击追加伤害上限
+    comboCap: 3,             // 连击追加伤害上限
+    // M14 服装：护甲减伤 + 损衣
+    armorDenom: 4,           // 每次受击减伤 = floor(全身 armor 合计 / armorDenom)；满配约 -3，远低于防御的 -60%
+    clothWearChance: 0.15    // 每次被击中，此概率磨损一件在穿服装（跌破半耐久撕破/归零报废）
   };
   G.COMBAT_TUNE = C;
 
@@ -64,11 +67,14 @@
   function makeEnemy(id) {
     var def = G.data.enemies[id];
     if (!def) { console.warn('[combat] 未知敌人:', id); def = { name: id, hp: 10, dmg: [1, 3], speed: 1, infect: 0 }; }
+    // M15：冬季丧尸迟缓（speed -1，下限 1；人类不受影响）——「敌弱我更弱」，非纯堆难度。
+    var speed = def.speed || 1;
+    if (!def.human && G.engine.isWinter && G.engine.isWinter()) speed = Math.max(1, speed - 1);
     return {
       id: id, name: def.name || id,
       hp: def.hp, maxHp: def.hp,
       dmg: def.dmg || [1, 3],
-      speed: def.speed || 1,
+      speed: speed,
       infect: def.infect || 0,
       loot: def.loot || null,
       descPool: def.descPool || [],
@@ -248,9 +254,18 @@
       if (Math.random() > C.enemyHit) { log.push(foeName(e) + '扑空。'); return; }
       var dmg = rand(e.dmg[0], e.dmg[1]);
       if (combat.defending) dmg = Math.round(dmg * C.defendReduce);
+      // M14 护甲：全身 armor 合计换算成固定减伤（下限 1，不抵消防御的价值）
+      var armor = G.engine.outfitArmor ? G.engine.outfitArmor() : 0;
+      var soak = Math.floor(armor / C.armorDenom);
+      if (soak > 0 && dmg > 0) dmg = Math.max(1, dmg - soak);
       G.engine.statAdd('hp', -dmg);
       var desc = e.descPool.length ? pick(e.descPool) : foeName(e) + '咬了上来';
-      log.push(desc + '，你受到 ' + dmg + ' 点伤害。');
+      log.push(desc + '，你受到 ' + dmg + ' 点伤害' + (soak > 0 ? '（护甲挡下 ' + soak + '）' : '') + '。');
+      // M14 损衣：受击有概率磨损一件在穿服装
+      if (dmg > 0 && G.engine.damageClothing && Math.random() < C.clothWearChance) {
+        var wearMsg = G.engine.damageClothing(1);
+        if (wearMsg) log.push(wearMsg);
+      }
       // 感染判定
       if (e.infect && Math.random() < e.infect) {
         var inf = rand(C.infectMin, C.infectMax);

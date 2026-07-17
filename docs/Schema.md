@@ -19,7 +19,7 @@ js/data/story/   qin.js lin.js mao.js secondary.js minor.js worldevents.js
 tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
 ```
 
-- 存档：localStorage 键 `lgys_save_{槽位}`，3 个槽位 + 自动存档槽；导出/导入为 Base64 JSON 字符串。
+- 存档：localStorage 键 `lgys_save_{槽位}`，3 个槽位 + 自动存档槽；导出/导入为 Base64 JSON 字符串。`G.SAVE_VERSION` 当前 **3**（M14 新增 `player.outfit`；M15 新增 `player.stats.cold`）；结构变更走 `save.js migrate()` 逐版本升级 + `normalize()` 补字段，老档读入自动补默认初始装与 `cold:0`。
 
 ## GameState（G.state）
 
@@ -31,7 +31,8 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
     day: 90, minute: 480,            // 当天 00:00 起的分钟数
     location: "home",
     stats: { hp:100, hunger:70, thirst:70, energy:80,
-             sanity:80, alcohol:0, addiction:0, infection:0 },   // 全部 0–100
+             sanity:80, alcohol:0, addiction:0, infection:0,
+             cold:0 },   // 全部 0–100；cold=寒冷值（M15，入冬后室外累积）
     bullets: 20,                     // 硬通货
     weapon: null,                    // 装备中武器 {id, durability}
     inventory: [ {id, count} ],      // 武器类单独成条目带 durability
@@ -52,7 +53,8 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
 ```
 
 - 状态数值全部钳制在 0–100。绝对时间 = day*1440 + minute，跨日由 time.js 统一处理。
-- **阈值效果（M1 实现，M3 配数值）**：hp=0 死亡（读档）；hunger/thirst 低于 20 开始扣 hp；energy<15 行动耗时 +50%；sanity<20 触发幻觉事件池；alcohol>60 文本进入醉酒变体、行动判定惩罚；addiction>50 每日定时发作事件；infection>80 进入濒死线（限时事件，可被林晚剧情救治）。
+- **阈值效果（M1 实现，M3 配数值）**：hp=0 死亡（读档）；hunger/thirst 低于 20 开始扣 hp；energy<15 行动耗时 +50%；sanity<20 触发幻觉事件池；alcohol>60 文本进入醉酒变体、行动判定惩罚；addiction>50 每日定时发作事件；infection>80 进入濒死线（限时事件，可被林晚剧情救治）；**cold（M15）>50 精力上限随寒冷等量下压、>80 每 10 分钟失温掉血**。
+- **季节与寒冷（M15）**：季节按游戏日分三档（秋/初冬 day≥140/深冬 day≥170），`G.engine.seasonTierNow()`→0/1/2、`seasonNow()`→字符串、`isWinter()`→bool，缓存于 `world.season`。`cold` 仅冬季室外累积（`TUNE.coldOutPer10[档] - 全身 warmth×TUNE.warmthRelief`，寒潮 `world.coldSnap` 期间加 `coldSnapSurge`），室内/生火/煮水消退。全部常量在 `time.js TUNE`。cond DSL 新增 `season:'winter'|'earlywinter'|'deepwinter'|'autumn'` 门（`winter`=初冬+深冬）。
 
 ## 条件 DSL（cond）
 
@@ -61,7 +63,8 @@ tools/build.js   （合并打包单 HTML 的 Node 脚本，M9 实现）
 ```js
 { loc:"bar", timeRange:[1200,1560],        // 分钟，支持跨午夜
   weekday:2, dayMin:95, chance:0.3,
-  stat:{ sanity:{lt:20}, alcohol:{gte:60} },
+  season:"winter",                          // M15 季节门（winter=初冬+深冬 / earlywinter / deepwinter / autumn）
+  stat:{ sanity:{lt:20}, alcohol:{gte:60}, cold:{gt:0} },
   aff:{ qin:{gte:40} }, stage:{ qin:{gte:2} },
   flag:{ "qin_s1_1":true, "world.butcher_raid":false },   // 无前缀查 player.flags，npc 标记写 "npc.qin.xxx"
   has:{ item:"flashlight", bullets:10 },
@@ -150,8 +153,12 @@ G.data.enemies = { zombie_shambler: { name:"跛行者", hp:30, dmg:[5,12], speed
 ```js
 G.data.items = { bandage: { name:"绷带", type:"med", desc:"...",
                  fx:{stat:{hp:+15}}, price:4, weight:1 }, ... };
-// type: weapon | med | food | drink | material | key | misc
+// type: weapon | med | food | drink | material | key | misc | clothing
 // weapon 额外: dmg:[min,max], durMax, hitPool:[...命中短语]
+// clothing 额外（M14）: slot:'top'|'bottom'|'shoes', warmth, armor, decency, durMax
+//   —— 穿在 player.outfit[slot]={id,dur}；耐久跌破半值即「撕破」属性减半、归零报废（state.clothingEff）。
+//   引擎接口：equip/unequip/repairClothing、outfitWarmth/outfitArmor/outfitDecency、isDressed、damageClothing。
+//   cond DSL 扩展 decency:{比较对象}（读全身体面合计）。
 G.data.trade = { zhao_main: { buy:[...id], sellRate:0.5,
                  restock:"weekday==4", tiers:{ 0:[...], 40:[...] } } };  // 好感解锁货架
 ```

@@ -183,6 +183,19 @@
       wrap.appendChild(lab); wrap.appendChild(track);
       statusEl.appendChild(wrap);
     });
+    // M15：入冬后（或有寒冷残留时）追加「寒冷」条，非冬季且为 0 时不显示以免平时噪声。
+    var cold = G.engine.statGet('cold') || 0;
+    if (((G.engine.isWinter && G.engine.isWinter()) || cold > 0)) {
+      var high = cold > G.TUNE.T_COLD_CAP;
+      var cwrap = h('div', { class: 'statusbar-item' });
+      var clab = h('div', { class: 'statusbar-label' });
+      clab.appendChild(h('span', { text: '寒冷' }));
+      clab.appendChild(h('span', { text: Math.round(cold) }));
+      var ctrack = h('div', { class: 'statusbar-track' });
+      ctrack.appendChild(h('div', { class: 'statusbar-fill cold' + (high ? ' low' : ''), style: { width: G.engine.clamp(cold, 0, 100) + '%' } }));
+      cwrap.appendChild(clab); cwrap.appendChild(ctrack);
+      statusEl.appendChild(cwrap);
+    }
   }
 
   function refresh() {
@@ -260,7 +273,7 @@
 
   // M3/M11 数据行动：type:'scavenge'→G.engine.scavenge，'water'/'boil'（M11 水源系统）→
   // G.engine.gatherWater/boilWater，均处理掉落/耗时/事件结算，形状一致（返回 {ok,msg}）。
-  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater' };
+  var DATA_ACTION_FN = { scavenge: 'scavenge', water: 'gatherWater', boil: 'boilWater', warm: 'makeFire' };
   function runDataAction(locId, action) {
     var fnName = DATA_ACTION_FN[action.type];
     if (!fnName || !G.engine[fnName]) { console.warn('[ui] 未知地点行动类型:', action.type); return; }
@@ -488,7 +501,7 @@
       build: function (body, close) {
         var inv = (S().player.inventory || []).filter(function (e) {
           var def = G.engine.itemDef(e.id);
-          return def && def.type !== 'weapon';
+          return def && def.fx;   // 只列能产生效果的消耗品（排除武器/服装/材料/关键等无 fx 项，防误耗）
         });
         if (!inv.length) { body.appendChild(h('div', { class: 'inv-empty', text: '没有可用道具' })); return; }
         var list = h('div', { class: 'inv-list' });

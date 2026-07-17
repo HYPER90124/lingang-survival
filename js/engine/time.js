@@ -42,9 +42,30 @@
     T_DRUNK:  60,   // 酒精 > 此值进入醉酒变体
     T_ADDICT: 50,   // 成瘾 > 此值每日发作
     T_INFECT: 80,   // 感染 > 此值进入濒死线
-    lowEnergyTimeMult: 1.5
+    lowEnergyTimeMult: 1.5,
+
+    // ---- M15 入冬季节压力 ----------------------------------------------------
+    // 季节按游戏日分三档（不做连续温度模拟）：秋(默认) → 初冬 → 深冬。
+    // 开局第 90 天=10月12日；day140≈12月1日入初冬，day170≈12月31日入深冬。
+    seasonDayEarly: 140,   // 初冬起始日
+    seasonDayDeep:  170,   // 深冬起始日
+    // 室外每 10 分钟寒冷累积基准，按季节档 [秋,初冬,深冬]；秋季 0=无寒冷压力。
+    coldOutPer10:   [0, 1.1, 1.9],
+    warmthRelief:   0.10,  // 每点全身有效保暖抵消的寒冷累积（outfitWarmth 读值）
+    coldIndoorPer10: 2.0,  // 室内/避风每 10 分钟寒冷消退
+    coldSnapSurge:  0.8,   // 寒潮期间（world.coldSnap）室外寒冷额外加成
+    boilWarmRelief: 12,    // 煮水行动兼取暖：一次的寒冷消退
+    fireWarmRelief: 40,    // 生火取暖（消耗柴火）一次的寒冷消退
+    winterWarmMarkup: 1.5, // 冬季保暖衣物商店涨价倍率（warmth>=3 的服装）
+    // 寒冷阈值（照感染/毒瘾的既有阈值模式）
+    T_COLD_CAP: 50,        // cold > 此值精力上限随寒冷值等量下降
+    T_COLD_HP:  80,        // cold > 此值每 10 分钟掉血（失温）
+    coldHpPer10: 0.5
   };
   G.TUNE = TUNE;
+
+  // 室内避风据点（不累积寒冷、并快速消退）；其余地点视为室外。
+  var INDOOR = { home: true, bar: true, church: true };
 
   function S() { return G.state; }
 
@@ -93,6 +114,23 @@
   G.engine.timeOfDay = timeOfDay;
   G.engine.isNight = function (state) { return timeOfDay(state) === '夜晚'; };
 
+  // ---- 季节（M15） --------------------------------------------------------
+  // 档位：0 秋 / 1 初冬 / 2 深冬，按游戏日阈值切换（world.season 缓存于日结算，
+  // 但所有消费方一律走这里按当前日计算，兼容缺 world.season 的老档）。
+  var SEASON_NAMES = ['autumn', 'earlywinter', 'deepwinter'];
+  function seasonTier(day) {
+    if (day >= TUNE.seasonDayDeep) return 2;
+    if (day >= TUNE.seasonDayEarly) return 1;
+    return 0;
+  }
+  function seasonTierNow(state) { return seasonTier((state || S()).player.day); }
+  function seasonNow(state) { return SEASON_NAMES[seasonTierNow(state)]; }
+  function isWinter(state) { return seasonTierNow(state) >= 1; }
+  G.engine.seasonTier = seasonTier;
+  G.engine.seasonTierNow = seasonTierNow;
+  G.engine.seasonNow = seasonNow;
+  G.engine.isWinter = isWinter;
+
   // ---- 阈值状态查询 -------------------------------------------------------
   function timeCostMod() {
     return S().player.stats.energy < TUNE.T_ENERGY ? TUNE.lowEnergyTimeMult : 1;
@@ -105,9 +143,32 @@
   G.engine.isHallucinating = isHallucinating;
   G.engine.isCritical = isCritical;
 
+  // ---- 寒冷累积/消退（M15；每 10 分钟步进调用一次） ----------------------
+  // 室内：寒冷快速消退；室外：按季节档基准 - 全身保暖累积寒冷，寒潮加成，
+  // 保暖充足（gain<=0）时缓慢回落。秋季无寒冷压力，仅让残留寒冷慢慢散去。
+  function coldStep(p) {
+    var cold = p.stats.cold || 0;
+    if (INDOOR[p.location]) {
+      if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10);
+      return;
+    }
+    var base = TUNE.coldOutPer10[seasonTier(p.day)] || 0;
+    if (base <= 0) {                                   // 非冬季室外：无压力，残留缓退
+      if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10 * 0.5);
+      return;
+    }
+    var w = S().world;
+    if (w && w.flags && w.flags.coldSnap) base += TUNE.coldSnapSurge;
+    var warmth = G.engine.outfitWarmth ? G.engine.outfitWarmth() : 0;
+    var gain = base - warmth * TUNE.warmthRelief;
+    if (gain > 0) G.engine.statAdd('cold', gain);
+    else if (cold > 0) G.engine.statAdd('cold', -TUNE.coldIndoorPer10 * 0.5);
+  }
+
   // ---- 跨日结算：毒瘾/感染日结算 + 每日事件调度 --------------------------
   function dayRollover() {
     var st = S().player.stats;
+    if (S().world) S().world.season = SEASON_NAMES[seasonTier(S().player.day)];
     if (st.infection > 0) G.engine.statAdd('infection', TUNE.infectionDaily);
     if (st.addiction > TUNE.T_ADDICT) G.engine.statAdd('addiction', TUNE.addictionDaily);
     // 地点物资缓慢补给：搜刮计数每日回落（decay = max(.25, 1-count*.12)），
@@ -146,10 +207,20 @@
       G.engine.statAdd('thirst', -TUNE.thirstPer10);
       if (!opts.sleeping) G.engine.statAdd('energy', -TUNE.energyPer10);
 
+      // M15 寒冷累积/消退（睡眠也照常，室内会消退，露宿则继续挨冻）
+      coldStep(p);
+
       // 饥/渴过低掉血
       if (p.stats.hunger < TUNE.T_STARVE || p.stats.thirst < TUNE.T_STARVE) {
         G.engine.statAdd('hp', -TUNE.starveHpPer10);
       }
+
+      // M15 寒冷阈值：>50 精力上限随寒冷等量压低；>80 失温掉血
+      if (p.stats.cold > TUNE.T_COLD_CAP) {
+        var cap = 100 - (p.stats.cold - TUNE.T_COLD_CAP);   // 50→100 … 100→50
+        if (p.stats.energy > cap) G.engine.statSet('energy', cap);
+      }
+      if (p.stats.cold > TUNE.T_COLD_HP) G.engine.statAdd('hp', -TUNE.coldHpPer10);
 
       // 死亡检测（hp=0）
       if (p.stats.hp <= 0) {

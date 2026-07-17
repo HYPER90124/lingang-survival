@@ -140,15 +140,16 @@
   // 背包面板
   // =========================================================================
   var INV_CATS = [
-    { key: 'all', label: '全部' }, { key: 'weapon', label: '武器' }, { key: 'med', label: '药品' },
-    { key: 'food', label: '食物' }, { key: 'drink', label: '饮水' }, { key: 'material', label: '材料' },
-    { key: 'key', label: '关键' }, { key: 'misc', label: '杂物' }
+    { key: 'all', label: '全部' }, { key: 'weapon', label: '武器' }, { key: 'clothing', label: '服装' },
+    { key: 'med', label: '药品' }, { key: 'food', label: '食物' }, { key: 'drink', label: '饮水' },
+    { key: 'material', label: '材料' }, { key: 'key', label: '关键' }, { key: 'misc', label: '杂物' }
   ];
 
   // 装备/卸下/使用由 M3 的 js/data/items.js 提供（G.engine.equipWeapon/unequipWeapon/useItem）；
   // 丢弃道具 M1/M3 均未提供对应函数，直接调最底层的 removeItem。
   function equipWeapon(id) { G.engine.equipWeapon(id); G.ui.refresh(); }
   function unequipWeapon() { G.engine.unequipWeapon(); G.ui.refresh(); }
+  function equipClothing(id) { G.engine.equipClothing(id); G.ui.refresh(); }
   function useItem(id) {
     var res = G.engine.useItem(id);
     if (res && res.msg) G.ui.toast(G.ui.tags.strip(res.msg));
@@ -169,6 +170,10 @@
         if (def.price != null) meta.push('参考价：' + def.price);
         if (entry.durability != null) meta.push('耐久：' + entry.durability + (def.durMax ? ('/' + def.durMax) : ''));
         wrap.appendChild(h('div', { class: 'item-detail-meta', text: meta.join(' · ') }));
+        if (def.type === 'clothing') {
+          var cslot = { top: '上装', bottom: '下装', shoes: '鞋' }[def.slot] || def.slot;
+          wrap.appendChild(h('div', { class: 'item-detail-meta', text: '部位：' + cslot + ' · 保暖 ' + (def.warmth || 0) + ' · 护甲 ' + (def.armor || 0) + ' · 体面 ' + (def.decency || 0) }));
+        }
 
         var actions = h('div', { class: 'item-actions' });
         if (def.type === 'weapon') {
@@ -177,6 +182,8 @@
           } else {
             actions.appendChild(h('button', { class: 'btn primary', text: '装备', onclick: function () { equipWeapon(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
           }
+        } else if (def.type === 'clothing') {
+          actions.appendChild(h('button', { class: 'btn primary', text: '穿上', onclick: function () { equipClothing(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
         } else if (def.fx) {
           actions.appendChild(h('button', { class: 'btn primary', text: '使用', onclick: function () { useItem(entry.id); close2(); if (activeOverlay) activeOverlay.refresh(); } }));
         }
@@ -228,7 +235,7 @@
           shown++;
           var row = h('div', { class: 'inv-item', onclick: function () { openItemDetail(entry); } });
           row.appendChild(h('span', { class: 'name', text: def.name || entry.id }));
-          row.appendChild(h('span', { class: 'count', text: type === 'weapon' ? '耐久' + entry.durability : '×' + entry.count }));
+          row.appendChild(h('span', { class: 'count', text: (type === 'weapon' || type === 'clothing') ? '耐久' + entry.durability : '×' + entry.count }));
           list.appendChild(row);
         });
         if (!shown) list.appendChild(h('div', { class: 'inv-empty', text: '空空如也' }));
@@ -248,12 +255,82 @@
     { key: 'sanity', label: '理智', abnormal: function (v) { return v < G.TUNE.T_SANITY; }, note: function (v) { return v < G.TUNE.T_SANITY ? '理智濒临崩溃，可能出现幻觉' : ''; } },
     { key: 'alcohol', label: '酒精', abnormal: function (v) { return v > G.TUNE.T_DRUNK; }, note: function (v) { return v > G.TUNE.T_DRUNK ? '酩酊大醉，判定受罚' : ''; } },
     { key: 'addiction', label: '成瘾', abnormal: function (v) { return v > G.TUNE.T_ADDICT; }, note: function (v) { return v > G.TUNE.T_ADDICT ? '瘾发难耐，每日发作' : ''; } },
-    { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } }
+    { key: 'infection', label: '感染', abnormal: function (v) { return v > G.TUNE.T_INFECT; }, note: function (v) { return v > G.TUNE.T_INFECT ? '感染濒危，命悬一线' : ''; } },
+    { key: 'cold', label: '寒冷', abnormal: function (v) { return v > G.TUNE.T_COLD_CAP; }, note: function (v) { return v > G.TUNE.T_COLD_HP ? '严重失温，正在掉血' : (v > G.TUNE.T_COLD_CAP ? '冷得发抖，精力上限下降' : ''); } }
   ];
+  // ---- 服装区块（三槽显示 + 换装/卸下/修补） ------------------------------
+  var CLOTH_SLOT_META = [
+    { key: 'top', label: '上装' }, { key: 'bottom', label: '下装' }, { key: 'shoes', label: '鞋' }
+  ];
+  function pickClothingFor(slot, close) {
+    G.ui.openOverlay({
+      title: '换' + ({ top: '上装', bottom: '下装', shoes: '鞋' }[slot] || '装'), center: true,
+      build: function (body2, close2) {
+        var opts = (S().player.inventory || []).filter(function (e) {
+          var d = G.engine.itemDef(e.id); return d && d.type === 'clothing' && d.slot === slot;
+        });
+        if (!opts.length) { body2.appendChild(h('div', { class: 'inv-empty', text: '背包里没有这个部位的替换衣物' })); return; }
+        var list = h('div', { class: 'inv-list' });
+        opts.forEach(function (entry) {
+          var d = G.engine.itemDef(entry.id) || {};
+          var row = h('div', { class: 'inv-item', onclick: function () {
+            G.engine.equipClothing(entry.id); G.ui.refresh(); close2(); if (activeOverlay) activeOverlay.refresh();
+          } });
+          row.appendChild(h('span', { class: 'name', text: d.name || entry.id }));
+          row.appendChild(h('span', { class: 'count', text: '耐久' + entry.durability }));
+          list.appendChild(row);
+        });
+        body2.appendChild(list);
+      }
+    });
+  }
+  function renderOutfit(body) {
+    var o = S().player.outfit || {};
+    body.appendChild(h('div', { class: 'section-title', text: '着装' }));
+    var sum = h('div', { class: 'outfit-summary', text: '保暖 ' + G.engine.outfitWarmth() + ' · 护甲 ' + G.engine.outfitArmor() + ' · 体面 ' + G.engine.outfitDecency() });
+    body.appendChild(sum);
+    var wrap = h('div', { class: 'outfit-slots' });
+    CLOTH_SLOT_META.forEach(function (sm) {
+      var c = o[sm.key];
+      var row = h('div', { class: 'outfit-row' });
+      var left = h('div', { class: 'outfit-info' });
+      left.appendChild(h('span', { class: 'outfit-slot', text: sm.label }));
+      if (c) {
+        var def = G.engine.itemDef(c.id) || {};
+        var eff = G.engine.clothingEff(c);
+        left.appendChild(h('span', { class: 'outfit-name' + (eff.torn ? ' torn' : ''), text: (def.name || c.id) + (eff.torn ? '（破损）' : '') }));
+        left.appendChild(h('span', { class: 'outfit-dur', text: '耐久 ' + c.dur + '/' + (def.durMax || '?') }));
+      } else {
+        left.appendChild(h('span', { class: 'outfit-name empty', text: '（空着）' }));
+      }
+      row.appendChild(left);
+      var acts = h('div', { class: 'outfit-acts' });
+      acts.appendChild(h('button', { class: 'btn', text: c ? '更换' : '穿上', onclick: function () { pickClothingFor(sm.key); } }));
+      if (c) {
+        var def2 = G.engine.itemDef(c.id) || {};
+        if (c.dur < (def2.durMax || 1) && G.engine.hasItem('sewingkit')) {
+          acts.appendChild(h('button', { class: 'btn', text: '修补', onclick: function () {
+            var res = G.engine.repairClothing(sm.key);
+            if (res && res.msg) G.ui.toast(G.ui.tags.strip(res.msg));
+            if (activeOverlay) activeOverlay.refresh();
+          } }));
+        }
+        acts.appendChild(h('button', { class: 'btn', text: '脱下', onclick: function () {
+          G.engine.unequipClothing(sm.key); G.ui.refresh(); if (activeOverlay) activeOverlay.refresh();
+        } }));
+      }
+      row.appendChild(acts);
+      wrap.appendChild(row);
+    });
+    body.appendChild(wrap);
+  }
+
   function openBody() {
     openTop({
       title: '身体状态',
       build: function (body) {
+        renderOutfit(body);
+        body.appendChild(h('div', { class: 'section-title', text: '状态' }));
         var grid = h('div', { class: 'body-grid' });
         BODY_STATS.forEach(function (st) {
           var v = G.engine.statGet(st.key);
@@ -493,9 +570,11 @@
         var buyList = h('div', { class: 'shop-list' });
         buyIds.forEach(function (id) {
           var idef = G.engine.itemDef(id); if (!idef) return;
+          var price = G.engine.itemPriceNow ? G.engine.itemPriceNow(id) : idef.price;  // M15：冬季保暖装涨价
+          var hiked = price != null && idef.price != null && price > idef.price;
           var row = h('div', { class: 'shop-item' });
-          row.appendChild(h('span', { text: idef.name || id }));
-          row.appendChild(h('span', { class: 'price', text: (idef.price || 0) + ' 弹' }));
+          row.appendChild(h('span', { text: (idef.name || id) + (hiked ? ' ❄' : '') }));
+          row.appendChild(h('span', { class: 'price', text: (price || 0) + ' 弹' }));
           row.appendChild(h('button', {
             class: 'btn', text: '购买', onclick: function () {
               var res = G.engine.shopBuy(shopId, id, 1);

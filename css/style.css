@@ -119,6 +119,7 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .statusbar-fill.hunger { background: var(--warn); }
 .statusbar-fill.thirst { background: var(--info); }
 .statusbar-fill.energy { background: var(--ok); }
+.statusbar-fill.cold { background: #6fa8c7; }
 .statusbar-fill.low { filter: brightness(1.3); animation: pulse 1.4s ease-in-out infinite; }
 
 /* ---- 主区域 ------------------------------------------------------------------ */
@@ -256,6 +257,20 @@ a, button, .tappable { -webkit-tap-highlight-color: transparent; }
 .body-stat .fill { height: 100%; border-radius: 4px; }
 .body-stat .note { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
 .body-stat.abnormal .label .val, .body-stat.abnormal .note { color: var(--danger); }
+
+/* ---- 着装区块（M14） ---------------------------------------------------------- */
+.outfit-summary { font-size: 13px; color: var(--fg-dim); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.outfit-slots { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+.outfit-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border-radius: 6px; background: #26231f; }
+.outfit-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.outfit-slot { font-size: 12px; color: var(--fg-dim); }
+.outfit-name { font-size: 14px; color: var(--fg-bright); }
+.outfit-name.empty { color: var(--fg-dim); font-style: italic; }
+.outfit-name.torn { color: var(--danger); }
+.outfit-dur { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.outfit-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.outfit-acts .btn { padding: 4px 10px; font-size: 13px; }
 
 /* ---- 地图面板（M11：按 mapPos 真实地理摆放，替代原环形布局） ------------------- */
 .map-wrap { width: 100%; overflow: hidden; }

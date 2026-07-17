@@ -20,7 +20,7 @@
   window.G = window.G || {};
   G.engine = G.engine || {};
 
-  G.SAVE_VERSION = 1;
+  G.SAVE_VERSION = 3;   // M14：player.outfit（服装三槽）；M15：player.stats.cold（寒冷值）
   var PREFIX = 'lgys_save_';
   var SLOTS = [1, 2, 3, 'auto'];
 
@@ -55,12 +55,32 @@
     if (!data.meta) data.meta = { version: 0 };
     var v = data.meta.version || 0;
     while (v < G.SAVE_VERSION) {
-      // switch (v) { case 1: /* v1→v2 迁移 */ break; }
+      switch (v) {
+        case 1: migrateV1toV2(data); break;   // 无 outfit → 发默认初始装
+        case 2: migrateV2toV3(data); break;   // 无 cold → 补 0（老档进冬季正常生效）
+      }
       v++;
     }
     data.meta.version = G.SAVE_VERSION;
     normalize(data);
     return data;
+  }
+  // v1→v2：老档没有服装系统，按性别补一套垫底初始装（等同新开局发放）。
+  function migrateV1toV2(d) {
+    var p = d.player; if (!p) return;
+    if (!p.outfit) p.outfit = defaultOutfit(p.gender);
+  }
+  // v2→v3：老档无寒冷字段，补 0（进入冬季后由 time.js 正常累积）。
+  function migrateV2toV3(d) {
+    var p = d.player; if (!p || !p.stats) return;
+    if (p.stats.cold == null) p.stats.cold = 0;
+  }
+  function defaultOutfit(gender) {
+    if (G.engine.initialOutfit) return G.engine.initialOutfit(gender);
+    // 引擎未加载时的兜底（durMax 由 items.js 决定，这里给保守值 20）
+    return gender === 'f'
+      ? { top: { id: 'worn_blouse', dur: 20 }, bottom: { id: 'worn_jeans', dur: 25 }, shoes: { id: 'worn_flats', dur: 18 } }
+      : { top: { id: 'worn_tshirt', dur: 20 }, bottom: { id: 'worn_jeans', dur: 25 }, shoes: { id: 'worn_sneakers', dur: 20 } };
   }
   // 补全可能缺失的容器字段（兼容旧档/手工档）
   function normalize(d) {
@@ -74,6 +94,8 @@
     d.calendar.milestones = d.calendar.milestones || [];
     d.scavenge = d.scavenge || {};
     d.npcs = d.npcs || {};
+    if (d.player && !d.player.outfit) d.player.outfit = defaultOutfit(d.player.gender);
+    if (d.player && d.player.stats && d.player.stats.cold == null) d.player.stats.cold = 0;
     return d;
   }
 

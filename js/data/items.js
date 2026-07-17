@@ -205,6 +205,30 @@
     lighter: { name: '打火机', type: 'material', desc: '一只打火机，打着火的概率对半开。', price: 6, weight: 1 },
     glassbottle: { name: '玻璃瓶', type: 'material', desc: '一只空玻璃瓶，能装水也能砸碎当武器凑数。', price: 1, weight: 1 },
     toolkit: { name: '工具箱', type: 'material', desc: '一只小工具箱，扳手螺丝刀配得七零八落。', price: 20, weight: 3 },
+    sewingkit: { name: '针线包', type: 'material', desc: '一只针线包，配着几卷线和补丁布，能把撕破的衣物缝补如初。', price: 8, weight: 1 }, // M14：修补服装耐久
+    firewood: { name: '柴火', type: 'material', desc: '一捆劈好的干柴，够生一小堆火。入冬后在外头烤火驱寒，是长时间外勤的命根子。', price: 3, weight: 3 }, // M15：室外「生火取暖」消耗，大幅消退寒冷
+
+    // ---- clothing ×18（三槽：上装 top / 下装 bottom / 鞋 shoes） ------------
+    // 字段：slot / warmth(保暖,M15) / armor(减伤) / decency(体面) / durMax(耐久)。
+    // 耐久战斗被击落损，跌破半耐久则「撕破」属性减半，归零则报废（见 state.clothingEff）。
+    // worn_ 系列为开局垫底基础装（见 state.newGame 按性别发放）。
+    worn_tshirt:   { name: '旧T恤',   type: 'clothing', slot: 'top',    warmth: 1, armor: 0, decency: 2, durMax: 20, price: 4,  weight: 1, desc: '一件洗得发白的旧T恤，领口松垮，勉强蔽体。' },
+    worn_blouse:   { name: '旧衬衫',   type: 'clothing', slot: 'top',    warmth: 1, armor: 0, decency: 3, durMax: 20, price: 4,  weight: 1, desc: '一件皱巴巴的女式衬衫，扣子掉了一颗，还算齐整。' },
+    hoodie:        { name: '连帽卫衣', type: 'clothing', slot: 'top',    warmth: 3, armor: 1, decency: 3, durMax: 30, price: 12, weight: 2, desc: '一件厚实的连帽卫衣，帽子还能挡挡风雨。' },
+    leather_jacket:{ name: '皮夹克',   type: 'clothing', slot: 'top',    warmth: 3, armor: 4, decency: 4, durMax: 40, price: 40, weight: 3, desc: '一件磨旧的皮夹克，皮子够厚，扛得住抓咬。' },
+    down_jacket:   { name: '羽绒服',   type: 'clothing', slot: 'top',    warmth: 6, armor: 2, decency: 4, durMax: 35, price: 45, weight: 3, desc: '一件蓬松的羽绒服，穿上像抱着一团暖气。' },
+    tactical_vest: { name: '战术背心', type: 'clothing', slot: 'top',    warmth: 1, armor: 6, decency: 3, durMax: 50, price: 60, weight: 4, desc: '一件带插板的战术背心，护住前胸后背要害。' },
+    raincoat:      { name: '雨衣',     type: 'clothing', slot: 'top',    warmth: 2, armor: 1, decency: 3, durMax: 25, price: 10, weight: 1, desc: '一件半透明的连体雨衣，下雨天不至于淋透。' },
+    worn_jeans:    { name: '旧牛仔裤', type: 'clothing', slot: 'bottom', warmth: 2, armor: 1, decency: 3, durMax: 25, price: 5,  weight: 1, desc: '一条膝盖磨薄的旧牛仔裤，还算耐穿。' },
+    cargo_pants:   { name: '工装裤',   type: 'clothing', slot: 'bottom', warmth: 3, armor: 2, decency: 3, durMax: 35, price: 15, weight: 2, desc: '一条多口袋工装裤，布料厚，兜里能塞不少东西。' },
+    thermal_pants: { name: '保暖裤',   type: 'clothing', slot: 'bottom', warmth: 5, armor: 1, decency: 3, durMax: 30, price: 20, weight: 1, desc: '一条抓绒保暖裤，贴身穿最挡寒。' },
+    tactical_pants:{ name: '战术裤',   type: 'clothing', slot: 'bottom', warmth: 2, armor: 4, decency: 3, durMax: 45, price: 35, weight: 2, desc: '一条加了护膝的战术长裤，耐磨抗划。' },
+    short_skirt:   { name: '短裙',     type: 'clothing', slot: 'bottom', warmth: 0, armor: 0, decency: 1, durMax: 15, price: 6,  weight: 1, desc: '一条短裙，好看，但在末日街头实在不合时宜。' },
+    worn_sneakers: { name: '旧运动鞋', type: 'clothing', slot: 'shoes',  warmth: 1, armor: 0, decency: 2, durMax: 20, price: 4,  weight: 1, desc: '一双开胶的旧运动鞋，鞋底还没磨穿。' },
+    worn_flats:    { name: '旧平底鞋', type: 'clothing', slot: 'shoes',  warmth: 1, armor: 0, decency: 2, durMax: 18, price: 4,  weight: 1, desc: '一双旧平底鞋，走久了硌脚，聊胜于赤足。' },
+    work_boots:    { name: '工装靴',   type: 'clothing', slot: 'shoes',  warmth: 2, armor: 2, decency: 3, durMax: 40, price: 18, weight: 2, desc: '一双钢头工装靴，踩碎玻璃也不怕。' },
+    combat_boots:  { name: '战靴',     type: 'clothing', slot: 'shoes',  warmth: 3, armor: 3, decency: 3, durMax: 50, price: 30, weight: 2, desc: '一双军用战靴，高帮护踝，跑起来也稳。' },
+    rubber_boots:  { name: '雨靴',     type: 'clothing', slot: 'shoes',  warmth: 2, armor: 1, decency: 2, durMax: 30, price: 8,  weight: 2, desc: '一双及膝雨靴，蹚水过泥都不进水。' },
 
     // ---- key/misc ×12（剧情预留，供 M5–M8 使用；无 fx，不入商店货架） -----
     qin_dossier: { name: '旧案卷宗', type: 'key', desc: '一份泛黄的案卷，封皮上盖着警局的旧公章。', price: null, weight: 1 }, // 预留：qin 警惕阶段剧情道具
@@ -260,5 +284,48 @@
     return true;
   }
   G.engine.unequipWeapon = unequipWeapon;
+
+  // ---- 服装装备/卸下/修补（M14；outfit 结构与效果计算见 state.js） ----------
+  // 从背包取该 id 的第一件服装穿上，占用其 slot，原槽位服装（若有）放回背包。
+  function equipClothing(id) {
+    var def = G.engine.itemDef(id);
+    if (!def || def.type !== 'clothing') return false;
+    var p = G.state.player;
+    p.outfit = p.outfit || { top: null, bottom: null, shoes: null };
+    var inv = p.inventory, idx = -1;
+    for (var i = 0; i < inv.length; i++) if (inv[i].id === id) { idx = i; break; }
+    if (idx < 0) return false;
+    var entry = inv[idx];
+    var slot = def.slot;
+    var cur = p.outfit[slot];
+    inv.splice(idx, 1);
+    if (cur) inv.push({ id: cur.id, count: 1, durability: cur.dur });
+    p.outfit[slot] = { id: id, dur: entry.durability != null ? entry.durability : (def.durMax || 1) };
+    return true;
+  }
+  G.engine.equipClothing = equipClothing;
+
+  function unequipClothing(slot) {
+    var p = G.state.player;
+    if (!p.outfit || !p.outfit[slot]) return false;
+    var c = p.outfit[slot];
+    p.outfit[slot] = null;
+    p.inventory.push({ id: c.id, count: 1, durability: c.dur });
+    return true;
+  }
+  G.engine.unequipClothing = unequipClothing;
+
+  // 用一只针线包把某槽位服装耐久补满（消耗 1 针线包）。返回 {ok,msg}。
+  function repairClothing(slot) {
+    var p = G.state.player;
+    if (!p.outfit || !p.outfit[slot]) return { ok: false, msg: '这个部位没穿衣服。' };
+    if (!G.engine.hasItem('sewingkit')) return { ok: false, msg: '你没有[item]针线包[/item]。' };
+    var c = p.outfit[slot], def = G.engine.itemDef(c.id) || {};
+    if (c.dur >= (def.durMax || 1)) return { ok: false, msg: '[item]' + (def.name || c.id) + '[/item]还是完好的，用不着补。' };
+    c.dur = def.durMax || 1;
+    G.engine.removeItem('sewingkit', 1);
+    return { ok: true, msg: '你把[item]' + (def.name || c.id) + '[/item]缝补如新。' };
+  }
+  G.engine.repairClothing = repairClothing;
 
 })();

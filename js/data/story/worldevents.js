@@ -237,8 +237,8 @@
   ]);
   ev('enc_mall_2', { loc: 'mall', chance: 0.15 }, 480, 'enc_mall_2_p');
 
-  P('rare_mall_1_p', '运动用品店的仓储间塌了半边，砸变形的卷帘门后头，一整面货架没被人碰过：登山绳、手电、真空包装的肉干，全是救命的硬货。', [
-    { label: '装满背包', fx: { item: { rope: 1, flashlight: 1, driedmeat: 2 }, time: 25, stat: { energy: -5 } } }
+  P('rare_mall_1_p', '运动用品店的仓储间塌了半边，砸变形的卷帘门后头，一整面货架没被人碰过：登山绳、手电、真空包装的肉干，连挂样的皮夹克和战靴都还在——全是救命的硬货。', [
+    { label: '装满背包', fx: { item: { rope: 1, flashlight: 1, driedmeat: 2, leather_jacket: 1, combat_boots: 1 }, time: 25, stat: { energy: -5 } } } // M14：户外柜上架服装
   ]);
   ev('rare_mall_1', { loc: 'mall', chance: 0.05 }, 4320, 'rare_mall_1_p');
 

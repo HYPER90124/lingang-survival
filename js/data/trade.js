@@ -25,16 +25,21 @@
       npc: 'zhao', location: 'market', sellRate: 0.5, restock: 'weekday==4',
       tiers: {
         0: ['bottledwater', 'cannedfood', 'drycracker', 'instantnoodle', 'herbaltea',
-            'bandage', 'clothstrip', 'rope', 'tape', 'rustpipe', 'kitchenknife'],
+            'bandage', 'clothstrip', 'rope', 'tape', 'rustpipe', 'kitchenknife',
+            'sewingkit', 'hoodie', 'worn_jeans', 'work_boots'],          // M14：日用服装 + 针线包
         40: ['machete', 'crowbar', 'baseballbat', 'militaryfirstaid', 'antibiotics',
-             'gasoline', 'battery', 'flashlight'],
-        70: ['pistol', 'revolver', 'shotgun', 'sledgehammer', 'fireaxe', 'spikebat']
-      }
+             'gasoline', 'battery', 'flashlight',
+             'down_jacket', 'thermal_pants', 'cargo_pants', 'raincoat'], // M14：入冬保暖装
+        70: ['pistol', 'revolver', 'shotgun', 'sledgehammer', 'fireaxe', 'spikebat',
+             'leather_jacket']
+      },
+      winterStock: ['firewood']   // M15：冬季上新（柴火；保暖衣物本就在 tier40，入冬另涨价）
     },
     fang_ammo: {
       npc: 'fang', location: 'checkpoint', sellRate: 0.4, restock: null,
       tiers: {
-        0: ['pistol', 'revolver', 'militaryfirstaid', 'scrapmetal', 'gasoline']
+        0: ['pistol', 'revolver', 'militaryfirstaid', 'scrapmetal', 'gasoline',
+            'tactical_vest', 'tactical_pants', 'combat_boots']           // M14：军用护甲装
       }
     },
     cai_barter: {
@@ -50,6 +55,19 @@
     }
   };
 
+  // M15：当前实际售价（冬季保暖衣物 warmth>=3 涨价；其余物品原价）。
+  function itemPriceNow(id) {
+    var def = G.engine.itemDef(id);
+    if (!def || def.price == null) return def ? def.price : null;
+    var price = def.price;
+    if (def.type === 'clothing' && (def.warmth || 0) >= 3 &&
+        G.engine.isWinter && G.engine.isWinter()) {
+      price = Math.ceil(price * ((G.TUNE && G.TUNE.winterWarmMarkup) || 1.5));
+    }
+    return price;
+  }
+  G.engine.itemPriceNow = itemPriceNow;
+
   // ---- 好感分层货架 ---------------------------------------------------------
   function buyableItems(shopId) {
     var shop = G.data.trade[shopId];
@@ -59,6 +77,10 @@
     Object.keys(shop.tiers).map(Number).sort(function (a, b) { return a - b; }).forEach(function (threshold) {
       if (aff >= threshold) out = out.concat(shop.tiers[threshold]);
     });
+    // M15 冬季上新：winterStock 仅在初冬/深冬追加（去重，避免与货架重复）
+    if (shop.winterStock && G.engine.isWinter && G.engine.isWinter()) {
+      shop.winterStock.forEach(function (id) { if (out.indexOf(id) < 0) out.push(id); });
+    }
     return out;
   }
   G.engine.shopBuyableItems = buyableItems;
@@ -70,7 +92,7 @@
     if (buyableItems(shopId).indexOf(itemId) < 0) return { ok: false, msg: '这里没有卖这个。' };
     var def = G.engine.itemDef(itemId);
     if (!def) return { ok: false, msg: '未知道具。' };
-    var cost = (def.price || 0) * qty;
+    var cost = (itemPriceNow(itemId) || 0) * qty;   // M15：冬季保暖衣物按涨价后价结算
     if (G.state.player.bullets < cost) return { ok: false, msg: '子弹不够。' };
     G.state.player.bullets -= cost;
     G.engine.addItem(itemId, qty);

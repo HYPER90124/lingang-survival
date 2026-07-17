@@ -18,7 +18,10 @@
  *   'water'    —— 走 G.engine.gatherWater（M11 新增），action.water:'river'|'rain' 区分取水/接雨水，
  *                  requiresItem:'glassbottle'（消耗 1 个换生水 1 份），rain 型另需 world.rainDay
  *   'boil'     —— 走 G.engine.boilWater（M11 新增），requiresItem:'lighter'（不消耗），
- *                  把包里 1 份生水（优先 riverwater，无则 rainwater）转成 boiledwater
+ *                  把包里 1 份生水（优先 riverwater，无则 rainwater）转成 boiledwater；
+ *                  M15：兼「取暖」，煮水时顺带消退寒冷 TUNE.boilWarmRelief
+ *   'warm'     —— 走 G.engine.makeFire（M15 新增），requiresItem:'firewood'（消耗 1），
+ *                  室外「生火取暖」大幅消退寒冷 TUNE.fireWarmRelief；cond:{stat:{cold:{gt:0}}} 仅有寒冷时显示
  *
  * 配套小逻辑（M1 未提供，数据层补齐，挂到 G.engine）：
  *   G.engine.locationNeighbors(locId)   —— 含 sewer 捷径解锁后的双向可达表 {locId:minutes}
@@ -225,13 +228,16 @@
       actions: [{ id: 'scavenge', label: '深入商场搜刮', type: 'scavenge', time: 35, energy: 10 }],
       scavengeTable: [
         { tier: 'common', weight: 60, items: [
-          { id: 'clothstrip', chance: 0.3 }, { id: 'chocolatebar', chance: 0.3 }, { id: 'cannedfish', chance: 0.25 }
+          { id: 'clothstrip', chance: 0.3 }, { id: 'chocolatebar', chance: 0.3 }, { id: 'cannedfish', chance: 0.25 },
+          { id: 'worn_tshirt', chance: 0.18 }, { id: 'short_skirt', chance: 0.12 }, { id: 'worn_flats', chance: 0.15 } // M14：服装区货架
         ] },
         { tier: 'uncommon', weight: 30, items: [
-          { id: 'machete', chance: 0.2 }, { id: 'spikebat', chance: 0.15 }, { id: 'liquor', chance: 0.2 }
+          { id: 'machete', chance: 0.2 }, { id: 'spikebat', chance: 0.15 }, { id: 'liquor', chance: 0.2 },
+          { id: 'hoodie', chance: 0.15 }, { id: 'cargo_pants', chance: 0.12 }, { id: 'rubber_boots', chance: 0.12 }
         ] },
         { tier: 'rare', weight: 10, items: [
-          { id: 'shotgun', chance: 0.06 }, { id: 'revolver', chance: 0.06 }, { id: 'militaryfirstaid', chance: 0.12 }
+          { id: 'shotgun', chance: 0.06 }, { id: 'revolver', chance: 0.06 }, { id: 'militaryfirstaid', chance: 0.12 },
+          { id: 'leather_jacket', chance: 0.08 }, { id: 'down_jacket', chance: 0.08 }
         ] }
       ],
       adjacent: { police: 35, park: 30, checkpoint: 35, metro: 35 },
@@ -324,11 +330,43 @@
     });
   });
 
+  // M15「生火取暖」：室内安全区外的地点新增该行动，消耗 1 柴火大幅消退寒冷，
+  // 仅当身上确有寒冷值（cold>0）时显示（cond 走既有 stat DSL），避免非冬季冗余。
+  Object.keys(G.data.locations).forEach(function (id) {
+    if (RAIN_EXEMPT[id]) return;
+    G.data.locations[id].actions.push({
+      id: 'make_fire', label: '生火取暖', type: 'warm',
+      time: 20, energy: 2, requiresItem: 'firewood',
+      cond: { stat: { cold: { gt: 0 } } }
+    });
+  });
+
   // ---- 配套小逻辑 -----------------------------------------------------------
+  // M15：入冬后给地点描述追加一句季节变体（从简：按季节档 + 室内外 + 昼夜取固定句，
+  // 不随机以免每次重渲染闪烁）。秋季返回空串（不改动原描述）。
+  var INDOOR_LOC = { home: true, bar: true, church: true };
+  function seasonSuffix(locId) {
+    var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+    if (tier === 0) return '';
+    var night = G.engine.isNight();
+    if (INDOOR_LOC[locId]) {
+      return tier >= 2
+        ? '　屋里那点火光挡不住深冬的寒气，呵气成霜，你把领口又裹紧了些。'
+        : '　入了冬，屋里也存不住多少暖意，指尖凉得发僵。';
+    }
+    if (tier >= 2) {
+      return night
+        ? '　深冬的夜里滴水成冰，风像刀子，在外头多留一刻都是煎熬。'
+        : '　天地一片惨白，积雪没过脚踝，呼出的白气转眼散在刺骨的风里。';
+    }
+    return night
+      ? '　初冬的夜风灌进衣领，冻得人骨头发紧。'
+      : '　初冬的寒意漫上来，路边的水洼结了层薄冰。';
+  }
   function locationDesc(locId) {
     var loc = G.data.locations[locId];
     if (!loc) return '';
-    return G.engine.isNight() ? loc.descNight : loc.descDay;
+    return (G.engine.isNight() ? loc.descNight : loc.descDay) + seasonSuffix(locId);
   }
   G.engine.locationDesc = locationDesc;
 
@@ -451,13 +489,28 @@
     if (action.water === 'rain' && !G.engine.getFlag('world.rainDay')) {
       return { ok: false, msg: '今天没下雨，接不到雨水。' };
     }
+    // M15 水源冬季联动：深冬江边取水要破冰（耗时翻倍）；冬季「接雨水」实为接雪化水，
+    // 产出减半（半数概率空手而归），且不消耗玻璃瓶（瓶子留着，不算白费一趟）。
+    var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+    var isRain = action.water === 'rain';
+    var time = action.time || 0;
+    var prefix = '';
+    if (!isRain && tier >= 2) { time *= 2; prefix = '江面结了冰，你先砸开一个窟窿才够着水——'; }
+    if (isRain && tier >= 1) {
+      prefix = '天上飘的是雪不是雨，你刮拢积雪慢慢化水——';
+      if (Math.random() < 0.5) {
+        G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: time });
+        if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+        return { ok: true, msg: prefix + '积雪太薄，这一趟没化出多少，瓶子还空着。' };
+      }
+    }
     G.engine.removeItem(action.requiresItem, 1);
-    var itemId = action.water === 'rain' ? 'rainwater' : 'riverwater';
+    var itemId = isRain ? 'rainwater' : 'riverwater';
     G.engine.addItem(itemId, 1);
-    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: time });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
     var def = G.engine.itemDef(itemId);
-    return { ok: true, msg: '打了一瓶[item]' + (def ? def.name : itemId) + '[/item]，生水没烧开不能直接喝。' };
+    return { ok: true, msg: prefix + '打了一瓶[item]' + (def ? def.name : itemId) + '[/item]，生水没烧开不能直接喝。' };
   }
   G.engine.gatherWater = gatherWater;
 
@@ -474,12 +527,30 @@
     if (!raw) return { ok: false, msg: '包里没有生水可以煮。' };
     G.engine.removeItem(raw, 1);
     G.engine.addItem('boiledwater', 1);
+    // M15：煮水行动兼「取暖」——炉火顺带消退寒冷。
+    var warmed = false;
+    if (G.TUNE && G.engine.statGet('cold') > 0) { G.engine.statAdd('cold', -G.TUNE.boilWarmRelief); warmed = true; }
     G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
     if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
     var rawDef = G.engine.itemDef(raw);
-    return { ok: true, msg: '把[item]' + (rawDef ? rawDef.name : raw) + '[/item]烧开，得到[item]净水[/item]。' };
+    return { ok: true, msg: '把[item]' + (rawDef ? rawDef.name : raw) + '[/item]烧开，得到[item]净水[/item]。' +
+      (warmed ? '就着炉火烤了烤手，暖和了些。' : '') };
   }
   G.engine.boilWater = boilWater;
+
+  // 生火取暖（M15）：室外消耗 1 柴火大幅消退寒冷（requiresItem 由 UI 置灰前置校验，这里再兜底）。
+  function makeFire(locId, actionId) {
+    var action = findAction(locId, actionId);
+    if (!action) return { ok: false, msg: '这里没有这个行动。' };
+    if (!G.engine.hasItem('firewood')) return { ok: false, msg: '没有[item]柴火[/item]，生不起火。' };
+    G.engine.removeItem('firewood', 1);
+    var relief = (G.TUNE && G.TUNE.fireWarmRelief) || 40;
+    G.engine.statAdd('cold', -relief);
+    G.engine.applyFx({ stat: { energy: -(action.energy || 0) }, time: action.time || 0 });
+    if (G.state.player.stats.hp > 0) G.engine.checkEvents('action');
+    return { ok: true, msg: '你拢起[item]柴火[/item]生了堆火，凑近烤了烤，寒气退了大半。' };
+  }
+  G.engine.makeFire = makeFire;
 
   // ---- 通用氛围/收获/遇敌 random 事件（每地点 2–3 条，无剧情，给 M8 事件池打底） ----
   function passage(id, text, choices) {

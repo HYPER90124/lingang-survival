@@ -43,24 +43,27 @@
     NPC_IDS.forEach(function (id) {
       npcs[id] = { met: false, alive: true, affinity: 0, stage: 0, storyFlags: {}, vars: {} };
     });
+    var gender = opts.gender === 'f' ? 'f' : 'm';
     return {
       meta: { version: G.SAVE_VERSION || 1, saveTime: 0 },
       player: {
         name: opts.name || '',
-        gender: opts.gender === 'f' ? 'f' : 'm',
+        gender: gender,
         // 时间锚点：第 90 天 = 10月12日周日，开局早晨醒来
         day: 90, minute: 480,
         location: 'home',
         stats: { hp: 100, hunger: 70, thirst: 70, energy: 80,
-                 sanity: 80, alcohol: 0, addiction: 0, infection: 0 },
+                 sanity: 80, alcohol: 0, addiction: 0, infection: 0,
+                 cold: 0 },   // M15：寒冷值（0–100），开局 10 月尚在秋季不累积
         bullets: 20,
         weapon: null,                 // {id, durability}
-        inventory: [],                // [{id, count}]；武器条目额外带 durability
+        outfit: initialOutfit(gender),// M14：三槽服装 {top,bottom,shoes}，每槽 {id,dur}|null
+        inventory: [],                // [{id, count}]；武器/服装条目额外带 durability
         skills: {},
         flags: {}
       },
       npcs: npcs,
-      world: { flags: {}, cooldowns: {}, _firedDay: {} }, // _firedDay: scheduled 每日去重
+      world: { flags: {}, cooldowns: {}, _firedDay: {}, season: 'autumn' }, // _firedDay: scheduled 每日去重；season: M15 季节缓存
       calendar: { appointments: [], milestones: [] },
       scavenge: {}
     };
@@ -159,8 +162,8 @@
     if (n <= 0) return removeItem(id, -n);
     var def = itemDef(id);
     var inv = S().player.inventory;
-    // 武器每把独立成条目并带耐久（可堆叠数量仅对非武器有效）
-    if (def && def.type === 'weapon') {
+    // 武器/服装每件独立成条目并带耐久（可堆叠数量仅对无耐久物资有效）
+    if (def && (def.type === 'weapon' || def.type === 'clothing')) {
       for (var k = 0; k < n; k++) {
         inv.push({ id: id, count: 1, durability: def.durMax || 1 });
       }
@@ -207,6 +210,77 @@
   G.engine.carryCap = carryCap;
   G.engine.isOverweight = isOverweight;
 
+  // ---- 服装（M14） --------------------------------------------------------
+  // 开局按性别发一套垫底基础装（worn 系列）。老档迁移走 save.js DEFAULT_OUTFIT。
+  var CLOTH_SLOTS = ['top', 'bottom', 'shoes'];
+  G.CLOTH_SLOTS = CLOTH_SLOTS;
+  function initialOutfit(gender) {
+    var def = itemDef; // 取 durMax
+    function piece(id) { var d = def(id); return { id: id, dur: (d && d.durMax) || 1 }; }
+    return gender === 'f'
+      ? { top: piece('worn_blouse'), bottom: piece('worn_jeans'), shoes: piece('worn_flats') }
+      : { top: piece('worn_tshirt'), bottom: piece('worn_jeans'), shoes: piece('worn_sneakers') };
+  }
+  G.engine.initialOutfit = initialOutfit;
+
+  // 单件服装的「有效属性」：耐久跌破半值即撕破，warmth/armor/decency 减半向下取整。
+  function clothingEff(entry) {
+    var out = { warmth: 0, armor: 0, decency: 0 };
+    if (!entry) return out;
+    var def = itemDef(entry.id);
+    if (!def) return out;
+    var torn = entry.dur != null && entry.dur < (def.durMax || 1) * 0.5;
+    var f = torn ? 0.5 : 1;
+    out.warmth = Math.floor((def.warmth || 0) * f);
+    out.armor = Math.floor((def.armor || 0) * f);
+    out.decency = Math.floor((def.decency || 0) * f);
+    out.torn = torn;
+    return out;
+  }
+  G.engine.clothingEff = clothingEff;
+
+  // 全身三槽属性合计（M15 读 warmth；combat 读 armor；文本读 decency）
+  function outfitSum(attr) {
+    var o = S().player.outfit; if (!o) return 0;
+    var total = 0;
+    for (var i = 0; i < CLOTH_SLOTS.length; i++) total += clothingEff(o[CLOTH_SLOTS[i]])[attr];
+    return total;
+  }
+  function outfitWarmth() { return outfitSum('warmth'); }
+  function outfitArmor() { return outfitSum('armor'); }
+  function outfitDecency() { return outfitSum('decency'); }
+  // 是否「基本着装」：上装与下装两槽都有衣物（成人场景宽衣描写等按此分支）
+  function isDressed() {
+    var o = S().player.outfit;
+    return !!(o && o.top && o.bottom);
+  }
+  G.engine.outfitWarmth = outfitWarmth;
+  G.engine.outfitArmor = outfitArmor;
+  G.engine.outfitDecency = outfitDecency;
+  G.engine.isDressed = isDressed;
+
+  // 战斗被击时的损衣：随机一件在穿服装耐久 -amount，跨过撕破/报废阈值时返回提示文本。
+  // 报废（dur<=0）则从 outfit 移除该槽。无在穿服装返回 null。
+  function damageClothing(amount) {
+    var o = S().player.outfit; if (!o) return null;
+    amount = amount || 1;
+    var worn = CLOTH_SLOTS.filter(function (s) { return o[s]; });
+    if (!worn.length) return null;
+    var slot = worn[Math.floor(Math.random() * worn.length)];
+    var c = o[slot], def = itemDef(c.id) || {};
+    var wasTorn = c.dur < (def.durMax || 1) * 0.5;
+    c.dur -= amount;
+    if (c.dur <= 0) {
+      o[slot] = null;
+      return '[blood]' + (def.name || '衣物') + '[/blood]被彻底扯烂，再也没法穿了。';
+    }
+    if (!wasTorn && c.dur < (def.durMax || 1) * 0.5) {
+      return (def.name || '衣物') + '被撕开一道大口子，护不住身了。';
+    }
+    return null;
+  }
+  G.engine.damageClothing = damageClothing;
+
   // ---- 条件 DSL ------------------------------------------------------------
   // 对象内多条件为 AND；anyOf 数组内为 OR。
   function cmp(actual, spec) {
@@ -249,6 +323,15 @@
     if ('weekday' in cond && (p.day % 7) !== cond.weekday) return false;
     if ('dayMin' in cond && p.day < cond.dayMin) return false;
     if ('dayMax' in cond && p.day > cond.dayMax) return false;   // 扩展字段
+    if ('season' in cond) {                                      // M15：季节门（winter=初冬+深冬）
+      var tier = G.engine.seasonTierNow ? G.engine.seasonTierNow() : 0;
+      var want = cond.season;
+      var ok = want === 'winter' ? tier >= 1
+             : want === 'deepwinter' ? tier === 2
+             : want === 'earlywinter' ? tier === 1
+             : tier === 0;                                       // 'autumn'
+      if (!ok) return false;
+    }
 
     if ('stat' in cond) {
       for (var st in cond.stat) if (!cmp(p.stats[st], cond.stat[st])) return false;
@@ -280,6 +363,7 @@
     if ('met' in cond) {                                          // 扩展字段：是否已相遇
       var mn = s.npcs[cond.met]; if (!mn || !mn.met) return false;
     }
+    if ('decency' in cond && !cmp(outfitDecency(), cond.decency)) return false;  // M14：着装体面合计
 
     // chance 放最后：只有其余条件全过才掷骰，避免浪费判定
     if ('chance' in cond && Math.random() >= cond.chance) return false;
